@@ -76,7 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.no_restart and not args.restart and not args.yes:
                 should_restart = _confirm("Restart Codex now?")
             if should_restart:
-                print(restart_codex(detect_codex_processes()).message)
+                print(restart_codex(detect_codex_processes(), force=True).message)
             else:
                 print("Restart skipped; restart Codex manually to apply changes.")
 

@@ -55,6 +55,7 @@ def detect_codex_processes() -> tuple[CodexProcess, ...]:
 def restart_codex(
     processes: Sequence[CodexProcess],
     *,
+    force: bool = False,
     timeout_seconds: float = 5.0,
     terminate: Callable[[int, int], None] = os.kill,
     poll: Callable[[int], bool] | None = None,
@@ -62,18 +63,20 @@ def restart_codex(
 ) -> RestartResult:
     if not processes:
         return RestartResult(False, False, "No current-user Codex process detected.")
-    if len(processes) != 1:
+    if len(processes) != 1 and not force:
         return RestartResult(True, False, "Multiple Codex processes detected; restart skipped for safety.")
-    process = processes[0]
-    if not process.executable or not process.argv:
+    if any(not process.executable or not process.argv for process in processes):
         return RestartResult(True, False, "Codex launch command unavailable; restart skipped.")
     try:
-        terminate(process.pid, signal.SIGTERM)
+        for process in processes:
+            terminate(process.pid, signal.SIGTERM)
         if poll:
             deadline = time.monotonic() + timeout_seconds
-            while time.monotonic() < deadline and poll(process.pid):
+            while time.monotonic() < deadline and any(poll(process.pid) for process in processes):
                 time.sleep(0.05)
-        launch(process.argv)
+        # Relaunch one canonical Codex command. Multiple processes may be
+        # helper/worker instances and launching every argv would duplicate them.
+        launch(processes[0].argv)
     except (OSError, ValueError) as exc:
         return RestartResult(True, False, f"Codex restart failed: {type(exc).__name__}.")
     return RestartResult(True, True, "Codex restarted successfully.")

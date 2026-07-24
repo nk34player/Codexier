@@ -12,9 +12,9 @@ def test_provider_from_form_normalizes_id_and_models():
     assert [model.id for model in provider.models] == ["model-z", "model-a"]
 
 
-@pytest.mark.parametrize("url", ["https://example.com", "https://example.com/", "https://example.com/v1/"])
-def test_normalize_base_url_ends_with_v1_without_trailing_slash(url):
-    assert normalize_base_url(url) == "https://example.com/v1"
+@pytest.mark.parametrize("url", ["https://example.com", "https://example.com/", "https://example.com/v1", "https://example.com/v1/"])
+def test_normalize_base_url_ends_with_v1_and_trailing_slash(url):
+    assert normalize_base_url(url) == "https://example.com/v1/"
 
 
 def test_provider_form_rejects_missing_required_values():

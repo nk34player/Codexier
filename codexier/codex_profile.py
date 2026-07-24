@@ -23,6 +23,11 @@ class CodexProfileResult:
     profile_path: Path
 
 
+def launch_command(profile: str = "codexier") -> list[str]:
+    """Return explicit Codex profile launch command."""
+    return ["codex", "--profile", profile]
+
+
 def codex_home(explicit: Path | None = None) -> Path:
     if explicit:
         return explicit.expanduser()
@@ -39,7 +44,7 @@ def applied_provider_id(config_path: Path | None = None) -> str | None:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return None
-    value = data.get("model_provider")
+    value = data.get("codexier_provider_id") or data.get("model_provider")
     return value if isinstance(value, str) and value.strip() else None
 
 
@@ -106,17 +111,17 @@ def _merge_profile(data: dict[str, Any], provider: Provider, catalog_path: Path)
     result = copy.deepcopy(data)
     result["model"] = provider.models[0].id
     result["model_provider"] = "codexier"
+    result["codexier_provider_id"] = provider.id
     result["model_reasoning_effort"] = "medium"
     result["tool_output_token_limit"] = 8000
     result["model_catalog_json"] = str(catalog_path.resolve())
     providers = result.setdefault("model_providers", {})
     providers["codexier"] = {
         "name": "Codexier",
-        "base_url": provider.base_url,
+        "base_url": provider.base_url.rstrip("/") + "/",
         "wire_api": "responses",
         "wire_specification": "responses",
-        "api_key": provider.api_key,
-        "requires_api_key": True,
+        "experimental_bearer_token": provider.api_key,
         "requires_openai_auth": False,
     }
     profiles = result.setdefault("profiles", {})
@@ -137,7 +142,7 @@ def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexPr
     root.mkdir(parents=True, exist_ok=True)
     config_path = root / "config.toml"
     catalog_path = root / "codexier.models.json"
-    profile_path = root / "codexier.profile.toml"
+    profile_path = root / "codexier.config.toml"
     if config_path.exists():
         try:
             data = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -157,7 +162,6 @@ def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexPr
         "model_provider": "codexier",
         "model_catalog_json": str(catalog_path.resolve()),
         "tool_output_token_limit": 8000,
-        "[profiles.codexier]": {"name": "Codexier"},
     }
     atomic_write(profile_path, tomli_w.dumps(profile).encode(), mode=0o600)
     return CodexProfileResult(config_path, catalog_path, profile_path)

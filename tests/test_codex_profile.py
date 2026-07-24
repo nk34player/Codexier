@@ -33,7 +33,11 @@ def test_apply_codex_profile_writes_proxyagent_style_files(tmp_path: Path):
     assert parsed["model_provider"] == "codexier"
     assert parsed["model_catalog_json"] == str(codex_home / "codexier.models.json")
     assert parsed["other"]["value"] is True
-    assert parsed["model_providers"]["codexier"]["base_url"] == "https://demo.example/v1"
+    assert parsed["model_providers"]["codexier"]["base_url"] == "https://demo.example/v1/"
+    assert parsed["model_providers"]["codexier"]["experimental_bearer_token"] == "secret"
+    assert "api_key" not in parsed["model_providers"]["codexier"]
+    assert "requires_api_key" not in parsed["model_providers"]["codexier"]
+    assert parsed["model_providers"]["codexier"]["requires_openai_auth"] is False
     assert (codex_home / "codexier.models.json").exists()
     assert json.loads((codex_home / "codexier.models.json").read_text())["default_model"] == "gpt-5.2"
     assert result.config_path == config
@@ -49,3 +53,20 @@ def test_applied_provider_is_read_from_codex_config(tmp_path: Path):
         'name = "Codexier"\n'
     )
     assert applied_provider_id(config) == "codexier"
+
+
+def test_applied_provider_id_reads_catalog_provider_identity(tmp_path: Path):
+    from codexier.codex_profile import applied_provider_id
+
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'model_provider = "codexier"\n'
+        'codexier_provider_id = "demo"\n'
+    )
+    assert applied_provider_id(config) == "demo"
+
+
+def test_profile_launch_command_is_explicit():
+    from codexier.codex_profile import launch_command
+
+    assert launch_command() == ["codex", "--profile", "codexier"]
