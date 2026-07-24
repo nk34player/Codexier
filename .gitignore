@@ -3,6 +3,5 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 providers.local.json
-providers.json
 codexier.local.toml
 *.egg-info/
