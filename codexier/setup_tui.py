@@ -16,6 +16,7 @@ from .setup import normalize_base_url, provider_from_live_models
 from .tui import widget_id
 from .models import CodexSettings, mask_api_key
 from .codex_profile import applied_provider_id
+from .settings import load_settings, save_settings
 
 
 class SetupApp(App[bool]):
@@ -129,6 +130,7 @@ class ProviderManagerApp(App[Provider | None]):
         ("d", "remove", "Delete provider"),
         ("enter", "use", "Use provider"),
         ("q", "quit", "Quit"),
+        ("s", "settings", "Settings"),
     ]
 
     def __init__(self, catalog_path, providers: tuple[Provider, ...], target_path=None):
@@ -204,7 +206,14 @@ class ProviderManagerApp(App[Provider | None]):
             status.update(f"Selected provider: {provider.name} · {len(provider.models)} saved models")
 
     def action_add(self) -> None:
-        self.push_screen(ProviderFormScreen(self.catalog_path, None), self._form_finished)
+            self.push_screen(ProviderFormScreen(self.catalog_path, None), self._form_finished)
+
+    def action_settings(self) -> None:
+        self.push_screen(SettingsScreen(self.catalog_path), self._settings_finished)
+
+    def _settings_finished(self, changed: bool | None) -> None:
+        if changed:
+            self.query_one("#status", Static).update("Settings saved. Apply a provider to update Codex profile.")
 
     def action_edit(self) -> None:
         provider = self._selected()
@@ -272,6 +281,88 @@ class ProviderManagerApp(App[Provider | None]):
             self.providers += (provider,)
         self.run_worker(self._render_providers(), exclusive=True)
         self.query_one("#status", Static).update(f"Saved {provider.name}. Select it and press Enter to continue.")
+
+
+class SettingsScreen(Screen[bool | None]):
+    TITLE = "Codexier"
+    CSS = """
+    Screen { background: #0b1020; color: #e7eefc; }
+    #shell { width: 82%; height: auto; margin: 2 9; padding: 2 3; border: round #3b82f6; background: #131d38; }
+    #settings { height: auto; border: round #263b68; background: #0f1730; }
+    ListItem { padding: 1 2; }
+    ListItem.--highlight { background: #1d4ed8; color: white; }
+    #actions { height: 4; }
+    Button { width: 1fr; background: #2563eb; color: white; }
+    #back { background: #374151; }
+    #status { height: 3; color: #8be9fd; }
+    """
+    BINDINGS = [
+        ("space", "toggle", "Toggle setting"),
+        ("enter", "save", "Save settings"),
+        ("escape", "cancel", "Back"),
+    ]
+
+    SETTING_KEYS = (
+        ("supports_parallel_tool_calls", "Parallel tool calls"),
+        ("support_verbosity", "Response verbosity"),
+        ("supports_search_tool", "Search tool"),
+        ("web_search_tool_type", "Web search type"),
+    )
+
+    def __init__(self, catalog_path):
+        super().__init__()
+        self.catalog_path = catalog_path
+        self.settings = load_settings(catalog_path)
+        self.index = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="shell"):
+            yield Static("CODEXIER SETTINGS")
+            yield Static("↑↓ move · Space toggle · Enter save · Esc back", id="status")
+            yield ListView(id="settings")
+            with Horizontal(id="actions"):
+                yield Button("Save settings  ›", id="save", variant="primary")
+                yield Button("Back to main menu", id="back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._render_settings()
+        self.query_one("#settings", ListView).focus()
+
+    def _render_settings(self) -> None:
+        view = self.query_one("#settings", ListView)
+        view.clear()
+        for key, label in self.SETTING_KEYS:
+            value = self.settings.get(key)
+            display = "OFF" if value in (False, None, "") else str(value).upper()
+            view.append(ListItem(Label(f"{'●' if value else '○'}  {label}: {display}"), id=widget_id("setting", key)))
+
+    def _selected_key(self) -> str:
+        item = self.query_one("#settings", ListView).highlighted_child
+        if item and item.id:
+            return next((key for key, _ in self.SETTING_KEYS if widget_id("setting", key) == item.id), self.SETTING_KEYS[0][0])
+        return self.SETTING_KEYS[0][0]
+
+    def action_toggle(self) -> None:
+        key = self._selected_key()
+        if key == "web_search_tool_type":
+            self.settings[key] = None if self.settings.get(key) else "text"
+        else:
+            self.settings[key] = not bool(self.settings.get(key, False))
+        self._render_settings()
+
+    def action_save(self) -> None:
+        save_settings(self.catalog_path, self.settings)
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self.action_save()
+        elif event.button.id == "back":
+            self.action_cancel()
 
 
 class ProviderFormScreen(Screen[Provider | None]):

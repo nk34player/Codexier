@@ -69,6 +69,8 @@ TUI keys are shown in bottom footer bars:
 - Provider manager: `↑↓` select, `Enter` use, `A` add, `E` edit, `D` delete.
 - Model catalog: `↑↓` move, `Space` toggle, `Enter` apply, `Esc` back.
 - Provider form: `Tab` move, `Enter` fetch live models, `Esc` back.
+- Main menu: `S` opens settings. Toggle Codex capability flags, saved to
+  `codexier.settings.json` beside `providers.json`.
 
 ## First run
 

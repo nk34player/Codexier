@@ -48,8 +48,9 @@ def applied_provider_id(config_path: Path | None = None) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _catalog_model(provider: Provider, model_id: str, label: str, priority: int) -> dict[str, Any]:
-    return {
+def _catalog_model(provider: Provider, model_id: str, label: str, priority: int, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = settings or {}
+    model = {
         "slug": model_id,
         "display_name": f"{label} ({provider.name})",
         "description": f"{label} via {provider.name}",
@@ -70,11 +71,11 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int)
         "supports_reasoning_summary_parameter": True,
         "supports_reasoning_summaries": False,
         "default_reasoning_summary": "auto",
-        "support_verbosity": False,
+        "support_verbosity": bool(settings.get("support_verbosity", False)),
         "default_verbosity": "low",
         "apply_patch_tool_type": "freeform",
         "truncation_policy": {"mode": "tokens", "limit": 8000},
-        "supports_parallel_tool_calls": False,
+        "supports_parallel_tool_calls": bool(settings.get("supports_parallel_tool_calls", False)),
         "supports_image_detail_original": False,
         "context_window": 1_000_000,
         "max_context_window": 1_000_000,
@@ -82,7 +83,7 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int)
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": ["text"],
-        "supports_search_tool": False,
+        "supports_search_tool": bool(settings.get("supports_search_tool", False)),
         "use_responses_lite": False,
         "model": model_id,
         "displayName": f"{label} ({provider.name})",
@@ -93,10 +94,14 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int)
             {"reasoningEffort": "high", "description": "Thorough"},
         ],
     }
+    web_search_type = settings.get("web_search_tool_type")
+    if web_search_type:
+        model["web_search_tool_type"] = str(web_search_type)
+    return model
 
 
-def build_catalog(provider: Provider) -> dict[str, Any]:
-    models = [_catalog_model(provider, model.id, model.label, index) for index, model in enumerate(provider.models, 1)]
+def build_catalog(provider: Provider, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    models = [_catalog_model(provider, model.id, model.label, index, settings) for index, model in enumerate(provider.models, 1)]
     default = models[0]
     return {
         "models": models,
@@ -134,7 +139,7 @@ def _merge_profile(data: dict[str, Any], provider: Provider, catalog_path: Path)
     return result
 
 
-def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexProfileResult:
+def apply_codex_profile(provider: Provider, home: Path | None = None, settings: dict[str, Any] | None = None) -> CodexProfileResult:
     if not provider.models:
         raise ConfigError("Provider must contain at least one selected model.")
     root = codex_home(home)
@@ -150,7 +155,7 @@ def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexPr
     else:
         data = {}
     backup_config(config_path)
-    catalog = build_catalog(provider)
+    catalog = build_catalog(provider, settings)
     catalog["model_catalog_json"] = str(catalog_path.resolve())
     catalog["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write(catalog_path, (json.dumps(catalog, indent=2) + "\n").encode(), mode=0o600)

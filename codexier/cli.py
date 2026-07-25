@@ -12,6 +12,7 @@ from .process_manager import detect_codex_processes, restart_codex
 from .provider_store import ProviderStore, resolve_provider_path
 from .provider_store import create_provider_catalog
 from .setup_tui import run_provider_manager
+from .settings import load_settings
 from .ui import render_preview
 
 
@@ -61,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
 
             if target.format == "toml" or target.path.name == "config.toml":
-                result = apply_codex_profile(provider)
+                result = apply_codex_profile(provider, settings=load_settings(catalog_path))
                 print(f"Codex profile installed: {result.config_path}")
                 print(f"Model catalog installed: {result.catalog_path}")
             else:
