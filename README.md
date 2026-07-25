@@ -17,15 +17,8 @@ pip install -e '.[test]'
 
 ## Configure providers
 
-Copy `providers.example.json` to `providers.json`, then replace placeholder API
-keys. Provider credentials are stored as literal JSON values and are sensitive:
-
-```bash
-cp providers.example.json providers.json
-chmod 600 providers.json
-```
-
-Never commit `providers.json` containing real credentials.
+Provider credentials are stored in the local, ignored `providers.json` file.
+Do not commit this file or share its contents.
 
 ## Run
 
@@ -116,5 +109,5 @@ configuration changed and asks you to restart Codex manually.
 
 ```bash
 .venv/bin/python -m pytest -v
-.venv/bin/python -m compileall -q codexier codex_switcher.py
+.venv/bin/python -m compileall -q codexier
 ```
