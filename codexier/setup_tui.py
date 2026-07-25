@@ -113,9 +113,9 @@ class ProviderManagerApp(App[Provider | None]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     Header, Footer { background: #111a33; color: #8be9fd; }
-    #shell { width: 94%; height: 90%; margin: 2 3; }
+    #shell { width: 94%; height: 1fr; margin: 1 3; }
     #brand { height: 5; padding: 1 2; background: #131d38; border: round #3b82f6; color: #8be9fd; }
-    #providers { height: 1fr; margin-top: 1; border: round #263b68; background: #0f1730; }
+    #providers { width: 1fr; height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     #actions { height: 4; margin-top: 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
@@ -155,6 +155,11 @@ class ProviderManagerApp(App[Provider | None]):
 
     def on_mount(self) -> None:
         self._render_providers()
+        view = self.query_one("#providers", ListView)
+        view.focus()
+        if self.providers:
+            view.index = 0
+            view.scroll_to(0, animate=False)
 
     def _render_providers(self) -> None:
         view = self.query_one("#providers", ListView)
@@ -167,7 +172,12 @@ class ProviderManagerApp(App[Provider | None]):
 
     def _provider_label(self, provider: Provider) -> Label:
         marker = "● APPLIED" if provider.id == self.applied_id else "○"
-        label = Label(f"{marker}  ◆  {provider.name}\n   [dim]{provider.base_url} · {len(provider.models)} models[/dim]")
+        model_names = ", ".join(model.label for model in provider.models) or "no models selected"
+        label = Label(
+            f"{marker}  ◆  {provider.name}\n"
+            f"   [dim]{provider.base_url} · {len(provider.models)} models[/dim]\n"
+            f"   [cyan]{model_names}[/cyan]"
+        )
         if provider.id == self.applied_id:
             label.add_class("applied")
         return label
@@ -182,7 +192,12 @@ class ProviderManagerApp(App[Provider | None]):
         return next((provider for provider in self.providers if widget_id("provider", provider.id) == item.id), None)
 
     def _update_selected_status(self, provider: Provider | None) -> None:
-        status = self.query_one("#status", Static)
+        try:
+            status = self.query_one("#status", Static)
+        except NoMatches:
+            # ListView can emit Highlighted while screens are mounting or
+            # being dismissed. Ignore transient events until status exists.
+            return
         if provider is None:
             status.update("Selected provider: none")
         else:
