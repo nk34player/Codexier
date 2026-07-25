@@ -393,7 +393,7 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     #shell { width: 90%; height: 90%; margin: 2 5; padding: 2 3; border: round #3b82f6; background: #131d38; }
-    #models { height: 1fr; border: round #263b68; background: #0f1730; }
+    #models { width: 1fr; height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
     #count { color: #50fa7b; height: 2; }
@@ -416,7 +416,7 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static(f"LIVE MODELS  /  {self.provider_name}")
-            yield Static("SELECTED  0 / 5   (minimum 1)", id="count")
+            yield Static("LOADING LIVE MODELS …", id="count")
             yield ListView(id="models")
             with Horizontal(id="actions"):
                 yield Button("Apply to Codex  ›", id="save", variant="primary")
@@ -425,8 +425,17 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
 
     def on_mount(self) -> None:
         view = self.query_one("#models", ListView)
+        view.focus()
+        if not self.models:
+            view.append(ListItem(Label("No live models returned by provider."), id="no-models"))
+            self.query_one("#count", Static).update("NO MODELS AVAILABLE")
+            self.query_one("#save", Button).disabled = True
+            return
         for model in self.models:
             view.append(ListItem(Label(f"○  {model.label}\n   [dim]{model.id}[/dim]"), id=widget_id("live-model", model.id)))
+        view.index = 0
+        view.scroll_to(0, animate=False)
+        self.query_one("#count", Static).update("SELECTED  0 / 5   (minimum 1)")
         self.query_one("#save", Button).disabled = True
 
     def action_toggle(self) -> None:
