@@ -1,113 +1,54 @@
-# codexier
+# Codexier
 
-Interactive Codex provider and model catalog manager.
+Codexier is a terminal UI for managing OpenAI-compatible providers and
+applying selected models to a Codex configuration.
 
-Codexier uses a full-screen Textual TUI: arrow keys move, Enter toggles a
-model, and the live counter prevents selecting more than five. Model choices
-come only from the provider's OpenAI-compatible `/v1/models` endpoint. If the
-endpoint fails, codexier stops safely instead of using stale catalog models.
+## Quick start
 
-## Install
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[test]'
-```
-
-## Configure providers
-
-Provider credentials are stored in the local, ignored `providers.json` file.
-Do not commit this file or share its contents.
-
-## Run
+No manual installation is required. From the project directory, run the
+launcher for your platform:
 
 ```bash
-codexier
+./codexier.command
 ```
 
-Root convenience launcher:
+On Windows, double-click `codexier.bat` or run it from Command Prompt:
 
 ```bash
-python main.py
+codexier.bat
 ```
 
-`main.py` detects `.venv`, creates it when missing, installs the editable
-project and dependencies when imports are missing, then runs codexier with
-that interpreter. It forwards command-line arguments:
+The launcher creates `.venv`, installs runtime dependencies when needed, and
+starts Codexier with the project environment.
 
-```bash
-python main.py --dry-run
-python main.py --script tools/example.py --arg value
-```
+On first run, add a provider by entering its name, OpenAI-compatible base URL,
+and API key. Codexier discovers models through `/v1/models` and stores the
+catalog locally.
 
-## Run inside Codex
+After selecting models, choose **Apply to Codex** to update the detected Codex
+configuration. Use `--restart` to restart Codex when supported.
 
-From project root, run:
-
-```bash
-python main.py
-```
-
-After choosing provider and models, press **Enter** on `Apply to Codex`. This
-writes the detected Codex profile configuration. Restart Codex when prompted,
-or use:
-
-```bash
-python main.py --restart
-```
-
-TUI keys are shown in bottom footer bars:
-
-- Provider manager: `↑↓` select, `Enter` use, `A` add, `E` edit, `D` delete.
-- Model catalog: `↑↓` move, `Space` toggle, `Enter` apply, `Esc` back.
-- Provider form: `Tab` move, `Enter` fetch live models, `Esc` back.
-- Main menu: `S` opens settings. Toggle Codex capability flags, saved to
-  `codexier.settings.json` beside `providers.json`.
-
-## First run
-
-If `providers.json` does not exist, codexier creates it with private file
-permissions and opens an in-app setup screen. Enter provider name, base URL,
-and API key. Press Enter on the API-key field. Codexier calls the provider's
-`/v1/models` endpoint, saves returned models, and opens the normal provider
-switcher. A provider is not saved when live model discovery fails.
-
-Useful options:
+## Options
 
 ```text
---providers PATH   provider catalog override
---config PATH      Codex JSON/TOML config override
---dry-run          preview without writing
---no-restart       write config without restart prompt
---restart          attempt safe restart after writing
---yes              skip write confirmation
+--providers PATH   Use a specific provider catalog
+--config PATH      Use a specific Codex configuration
+--dry-run          Preview changes without writing
+--yes              Skip confirmation prompts
+--no-restart       Do not prompt to restart Codex
+--restart          Attempt a safe Codex restart
 ```
 
-Codex config detection checks `~/.codex/config.json`, then
-`~/.config/codex/config.toml`. If both exist, pass `--config` explicitly. New
-configs default to `~/.codex/config.json`.
+## Security
 
-Codexier recognizes this initial mapping:
-
-```json
-{
-  "provider": {"base_url": "...", "api_key": "..."},
-  "model_catalog": ["model-a", "model-b"]
-}
-```
-
-Unknown layouts are rejected before writing. This prevents accidental changes
-to unrelated Codex settings. Existing files are timestamped beside the target
-before atomic replacement.
-
-Restart is conservative. Codexier only restarts one unambiguous current-user
-Codex process with a recoverable launch command. Otherwise it reports that
-configuration changed and asks you to restart Codex manually.
+Provider credentials are stored in the local `providers.json` file, which is
+ignored by Git. Never commit or share this file. Codexier creates it with
+private file permissions when required.
 
 ## Development
 
 ```bash
-.venv/bin/python -m pytest -v
+pip install -e '.[test]'
+.venv/bin/python -m pytest
 .venv/bin/python -m compileall -q codexier
 ```
