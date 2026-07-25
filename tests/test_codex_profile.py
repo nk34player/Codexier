@@ -20,6 +20,10 @@ def test_build_catalog_contains_codex_model_metadata():
     assert catalog["models"][0]["slug"] == "gpt-5.2"
     assert catalog["models"][0]["context_window"] == 1000000
     assert catalog["models"][0]["auto_compact_token_limit"] == 900000
+    assert catalog["models"][0]["supports_search_tool"] is False
+    assert "web_search_tool_type" not in catalog["models"][0]
+    assert catalog["models"][0]["supports_parallel_tool_calls"] is False
+    assert catalog["models"][0]["support_verbosity"] is False
 
 
 def test_apply_codex_profile_writes_proxyagent_style_files(tmp_path: Path):
