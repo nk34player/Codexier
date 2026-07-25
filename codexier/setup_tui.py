@@ -153,19 +153,19 @@ class ProviderManagerApp(App[Provider | None]):
             yield Static("Selected provider: none", id="status")
         yield Footer()
 
-    def on_mount(self) -> None:
-        self._render_providers()
+    async def on_mount(self) -> None:
+        await self._render_providers()
         view = self.query_one("#providers", ListView)
         view.focus()
         if self.providers:
             view.index = 0
             view.scroll_to(0, animate=False)
 
-    def _render_providers(self) -> None:
+    async def _render_providers(self) -> None:
         view = self.query_one("#providers", ListView)
-        view.clear()
+        await view.clear()
         for provider in self.providers:
-            view.append(ListItem(self._provider_label(provider), id=widget_id("provider", provider.id)))
+            await view.append(ListItem(self._provider_label(provider), id=widget_id("provider", provider.id)))
         if self.providers:
             view.index = 0
             self._update_selected_status(self.providers[0])
@@ -223,7 +223,7 @@ class ProviderManagerApp(App[Provider | None]):
             status.add_class("error")
             return
         self.providers = tuple(item for item in self.providers if item.id != provider.id)
-        self._render_providers()
+        self.run_worker(self._render_providers(), exclusive=True)
 
     def action_use(self) -> None:
         provider = self._selected()
@@ -270,7 +270,7 @@ class ProviderManagerApp(App[Provider | None]):
         self.providers = tuple(provider if item.id == provider.id else item for item in self.providers)
         if not any(item.id == provider.id for item in self.providers):
             self.providers += (provider,)
-        self._render_providers()
+        self.run_worker(self._render_providers(), exclusive=True)
         self.query_one("#status", Static).update(f"Saved {provider.name}. Select it and press Enter to continue.")
 
 
