@@ -5,3 +5,6 @@ __pycache__/
 providers.local.json
 codexier.local.toml
 *.egg-info/
+
+# Local capability settings
+codexier.settings.json
