@@ -113,6 +113,33 @@ def test_context_profile_editor_saves_both_limits(tmp_path: Path):
     asyncio.run(scenario())
 
 
+def test_context_profiles_open_with_space_and_enter_saves_settings(tmp_path: Path):
+    async def scenario() -> None:
+        app = App()
+        async with app.run_test() as pilot:
+            app.push_screen(SettingsScreen(tmp_path / "providers.json"))
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, SettingsScreen)
+            settings_view = screen.query_one("#settings")
+            settings_view.index = len(screen.SETTING_KEYS) - 1
+
+            await pilot.press("space")
+            await pilot.pause()
+            assert isinstance(app.screen, ContextProfilesScreen)
+            app.pop_screen()
+            await pilot.pause()
+
+            settings_view = screen.query_one("#settings")
+            settings_view.index = len(screen.SETTING_KEYS) - 1
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is not screen
+            assert load_settings(tmp_path / "providers.json")["context_window"] == 250_000
+
+    asyncio.run(scenario())
+
+
 def test_context_profile_rejects_compact_limit_at_or_above_max(tmp_path: Path):
     async def scenario() -> None:
         app = App()

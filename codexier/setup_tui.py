@@ -335,7 +335,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     #status { height: 3; color: #8be9fd; }
     """
     BINDINGS = [
-        ("space", "toggle", "Toggle setting"),
+        ("space", "toggle", "Toggle / edit setting"),
         Binding("enter", "save", "Save settings", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
@@ -369,7 +369,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             yield Static("CODEXIER SETTINGS")
             yield Static(
                 "Choose a setting to change its value. Each entry includes a short explanation.\n"
-                "↑↓ move · Space toggle · Enter open/save · Esc back",
+                "↑↓ move · Space toggle or edit · Enter save · Esc back",
                 id="status",
             )
             yield ListView(id="settings")
@@ -428,6 +428,9 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
 
     def action_toggle(self) -> None:
         key = self._selected_key()
+        if key == "context_profiles":
+            self.app.push_screen(ContextProfilesScreen(self.catalog_path), self._context_profiles_finished)
+            return
         if key == "web_search_tool_type":
             self.settings[key] = None if self.settings.get(key) else "text"
         elif key == "input_modalities":
@@ -437,9 +440,6 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         self._refresh_setting(key)
 
     def action_save(self) -> None:
-        if self._selected_key() == "context_profiles":
-            self.app.push_screen(ContextProfilesScreen(self.catalog_path), self._context_profiles_finished)
-            return
         save_settings(self.catalog_path, self.settings)
         self.dismiss(True)
 
