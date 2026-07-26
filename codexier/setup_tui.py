@@ -16,6 +16,7 @@ from .setup import normalize_base_url, provider_from_live_models
 from .tui import widget_id
 from .models import CodexSettings, mask_api_key
 from .codex_profile import applied_provider_id
+from .settings import load_settings, save_settings
 
 
 class SetupApp(App[bool]):
@@ -113,9 +114,9 @@ class ProviderManagerApp(App[Provider | None]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     Header, Footer { background: #111a33; color: #8be9fd; }
-    #shell { width: 94%; height: 90%; margin: 2 3; }
+    #shell { width: 94%; height: 1fr; margin: 1 3; }
     #brand { height: 5; padding: 1 2; background: #131d38; border: round #3b82f6; color: #8be9fd; }
-    #providers { height: 1fr; margin-top: 1; border: round #263b68; background: #0f1730; }
+    #providers { width: 1fr; height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     #actions { height: 4; margin-top: 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
@@ -129,6 +130,7 @@ class ProviderManagerApp(App[Provider | None]):
         ("d", "remove", "Delete provider"),
         ("enter", "use", "Use provider"),
         ("q", "quit", "Quit"),
+        ("s", "settings", "Settings"),
     ]
 
     def __init__(self, catalog_path, providers: tuple[Provider, ...], target_path=None):
@@ -153,21 +155,31 @@ class ProviderManagerApp(App[Provider | None]):
             yield Static("Selected provider: none", id="status")
         yield Footer()
 
-    def on_mount(self) -> None:
-        self._render_providers()
-
-    def _render_providers(self) -> None:
+    async def on_mount(self) -> None:
+        await self._render_providers()
         view = self.query_one("#providers", ListView)
-        view.clear()
+        view.focus()
+        if self.providers:
+            view.index = 0
+            view.scroll_to(0, animate=False)
+
+    async def _render_providers(self) -> None:
+        view = self.query_one("#providers", ListView)
+        await view.clear()
         for provider in self.providers:
-            view.append(ListItem(self._provider_label(provider), id=widget_id("provider", provider.id)))
+            await view.append(ListItem(self._provider_label(provider), id=widget_id("provider", provider.id)))
         if self.providers:
             view.index = 0
             self._update_selected_status(self.providers[0])
 
     def _provider_label(self, provider: Provider) -> Label:
         marker = "● APPLIED" if provider.id == self.applied_id else "○"
-        label = Label(f"{marker}  ◆  {provider.name}\n   [dim]{provider.base_url} · {len(provider.models)} models[/dim]")
+        model_names = ", ".join(model.label for model in provider.models) or "no models selected"
+        label = Label(
+            f"{marker}  ◆  {provider.name}\n"
+            f"   [dim]{provider.base_url} · {len(provider.models)} models[/dim]\n"
+            f"   [cyan]{model_names}[/cyan]"
+        )
         if provider.id == self.applied_id:
             label.add_class("applied")
         return label
@@ -182,14 +194,26 @@ class ProviderManagerApp(App[Provider | None]):
         return next((provider for provider in self.providers if widget_id("provider", provider.id) == item.id), None)
 
     def _update_selected_status(self, provider: Provider | None) -> None:
-        status = self.query_one("#status", Static)
+        try:
+            status = self.query_one("#status", Static)
+        except NoMatches:
+            # ListView can emit Highlighted while screens are mounting or
+            # being dismissed. Ignore transient events until status exists.
+            return
         if provider is None:
             status.update("Selected provider: none")
         else:
             status.update(f"Selected provider: {provider.name} · {len(provider.models)} saved models")
 
     def action_add(self) -> None:
-        self.push_screen(ProviderFormScreen(self.catalog_path, None), self._form_finished)
+            self.push_screen(ProviderFormScreen(self.catalog_path, None), self._form_finished)
+
+    def action_settings(self) -> None:
+        self.push_screen(SettingsScreen(self.catalog_path), self._settings_finished)
+
+    def _settings_finished(self, changed: bool | None) -> None:
+        if changed:
+            self.query_one("#status", Static).update("Settings saved. Apply a provider to update Codex profile.")
 
     def action_edit(self) -> None:
         provider = self._selected()
@@ -208,7 +232,7 @@ class ProviderManagerApp(App[Provider | None]):
             status.add_class("error")
             return
         self.providers = tuple(item for item in self.providers if item.id != provider.id)
-        self._render_providers()
+        self.run_worker(self._render_providers(), exclusive=True)
 
     def action_use(self) -> None:
         provider = self._selected()
@@ -255,8 +279,90 @@ class ProviderManagerApp(App[Provider | None]):
         self.providers = tuple(provider if item.id == provider.id else item for item in self.providers)
         if not any(item.id == provider.id for item in self.providers):
             self.providers += (provider,)
-        self._render_providers()
+        self.run_worker(self._render_providers(), exclusive=True)
         self.query_one("#status", Static).update(f"Saved {provider.name}. Select it and press Enter to continue.")
+
+
+class SettingsScreen(Screen[bool | None]):
+    TITLE = "Codexier"
+    CSS = """
+    Screen { background: #0b1020; color: #e7eefc; }
+    #shell { width: 82%; height: auto; margin: 2 9; padding: 2 3; border: round #3b82f6; background: #131d38; }
+    #settings { height: auto; border: round #263b68; background: #0f1730; }
+    ListItem { padding: 1 2; }
+    ListItem.--highlight { background: #1d4ed8; color: white; }
+    #actions { height: 4; }
+    Button { width: 1fr; background: #2563eb; color: white; }
+    #back { background: #374151; }
+    #status { height: 3; color: #8be9fd; }
+    """
+    BINDINGS = [
+        ("space", "toggle", "Toggle setting"),
+        ("enter", "save", "Save settings"),
+        ("escape", "cancel", "Back"),
+    ]
+
+    SETTING_KEYS = (
+        ("supports_parallel_tool_calls", "Parallel tool calls"),
+        ("support_verbosity", "Response verbosity"),
+        ("supports_search_tool", "Search tool"),
+        ("web_search_tool_type", "Web search type"),
+    )
+
+    def __init__(self, catalog_path):
+        super().__init__()
+        self.catalog_path = catalog_path
+        self.settings = load_settings(catalog_path)
+        self.index = 0
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="shell"):
+            yield Static("CODEXIER SETTINGS")
+            yield Static("↑↓ move · Space toggle · Enter save · Esc back", id="status")
+            yield ListView(id="settings")
+            with Horizontal(id="actions"):
+                yield Button("Save settings  ›", id="save", variant="primary")
+                yield Button("Back to main menu", id="back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._render_settings()
+        self.query_one("#settings", ListView).focus()
+
+    def _render_settings(self) -> None:
+        view = self.query_one("#settings", ListView)
+        view.clear()
+        for key, label in self.SETTING_KEYS:
+            value = self.settings.get(key)
+            display = "OFF" if value in (False, None, "") else str(value).upper()
+            view.append(ListItem(Label(f"{'●' if value else '○'}  {label}: {display}"), id=widget_id("setting", key)))
+
+    def _selected_key(self) -> str:
+        item = self.query_one("#settings", ListView).highlighted_child
+        if item and item.id:
+            return next((key for key, _ in self.SETTING_KEYS if widget_id("setting", key) == item.id), self.SETTING_KEYS[0][0])
+        return self.SETTING_KEYS[0][0]
+
+    def action_toggle(self) -> None:
+        key = self._selected_key()
+        if key == "web_search_tool_type":
+            self.settings[key] = None if self.settings.get(key) else "text"
+        else:
+            self.settings[key] = not bool(self.settings.get(key, False))
+        self._render_settings()
+
+    def action_save(self) -> None:
+        save_settings(self.catalog_path, self.settings)
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self.action_save()
+        elif event.button.id == "back":
+            self.action_cancel()
 
 
 class ProviderFormScreen(Screen[Provider | None]):
@@ -378,7 +484,7 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     #shell { width: 90%; height: 90%; margin: 2 5; padding: 2 3; border: round #3b82f6; background: #131d38; }
-    #models { height: 1fr; border: round #263b68; background: #0f1730; }
+    #models { width: 1fr; height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
     #count { color: #50fa7b; height: 2; }
@@ -401,7 +507,7 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static(f"LIVE MODELS  /  {self.provider_name}")
-            yield Static("SELECTED  0 / 5   (minimum 1)", id="count")
+            yield Static("LOADING LIVE MODELS …", id="count")
             yield ListView(id="models")
             with Horizontal(id="actions"):
                 yield Button("Apply to Codex  ›", id="save", variant="primary")
@@ -410,8 +516,17 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
 
     def on_mount(self) -> None:
         view = self.query_one("#models", ListView)
+        view.focus()
+        if not self.models:
+            view.append(ListItem(Label("No live models returned by provider."), id="no-models"))
+            self.query_one("#count", Static).update("NO MODELS AVAILABLE")
+            self.query_one("#save", Button).disabled = True
+            return
         for model in self.models:
             view.append(ListItem(Label(f"○  {model.label}\n   [dim]{model.id}[/dim]"), id=widget_id("live-model", model.id)))
+        view.index = 0
+        view.scroll_to(0, animate=False)
+        self.query_one("#count", Static).update("SELECTED  0 / 5   (minimum 1)")
         self.query_one("#save", Button).disabled = True
 
     def action_toggle(self) -> None:

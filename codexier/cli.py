@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -8,10 +9,16 @@ from .config_manager import detect_config_target, load_target
 from .codex_profile import apply_codex_profile
 from .errors import CodexierError
 from .models import CodexSettings
-from .process_manager import detect_codex_processes, restart_codex
+from .process_manager import (
+    detect_chatgpt_processes,
+    detect_codex_processes,
+    restart_chatgpt,
+    restart_codex,
+)
 from .provider_store import ProviderStore, resolve_provider_path
 from .provider_store import create_provider_catalog
 from .setup_tui import run_provider_manager
+from .settings import load_settings
 from .ui import render_preview
 
 
@@ -61,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
 
             if target.format == "toml" or target.path.name == "config.toml":
-                result = apply_codex_profile(provider)
+                result = apply_codex_profile(provider, settings=load_settings(catalog_path))
                 print(f"Codex profile installed: {result.config_path}")
                 print(f"Model catalog installed: {result.catalog_path}")
             else:
@@ -72,13 +79,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 atomic_write(target.path, target.adapter.serialize(updated))
                 print(f"Configuration updated: {target.path}")
 
-            should_restart = args.restart
-            if not args.no_restart and not args.restart and not args.yes:
-                should_restart = _confirm("Restart Codex now?")
-            if should_restart:
-                print(restart_codex(detect_codex_processes()).message)
+            if sys.platform == "win32":
+                if args.no_restart:
+                    print("ChatGPT restart skipped by request.")
+                else:
+                    # ChatGPT is restarted automatically on Windows only when
+                    # it was already running; a closed app remains closed.
+                    print(restart_chatgpt(detect_chatgpt_processes()).message)
+                if args.restart:
+                    print(restart_codex(detect_codex_processes(), force=True).message)
             else:
-                print("Restart skipped; restart Codex manually to apply changes.")
+                should_restart = args.restart
+                if not args.no_restart and not args.restart and not args.yes:
+                    should_restart = _confirm("Restart Codex now?")
+                if should_restart:
+                    print(restart_codex(detect_codex_processes(), force=True).message)
+                else:
+                    print("Restart skipped; restart Codex manually to apply changes.")
 
             # Keep session alive after apply. User exits from provider manager.
             continue

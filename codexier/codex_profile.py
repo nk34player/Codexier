@@ -23,6 +23,11 @@ class CodexProfileResult:
     profile_path: Path
 
 
+def launch_command(profile: str = "codexier") -> list[str]:
+    """Return explicit Codex profile launch command."""
+    return ["codex", "--profile", profile]
+
+
 def codex_home(explicit: Path | None = None) -> Path:
     if explicit:
         return explicit.expanduser()
@@ -39,12 +44,13 @@ def applied_provider_id(config_path: Path | None = None) -> str | None:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return None
-    value = data.get("model_provider")
+    value = data.get("codexier_provider_id") or data.get("model_provider")
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _catalog_model(provider: Provider, model_id: str, label: str, priority: int) -> dict[str, Any]:
-    return {
+def _catalog_model(provider: Provider, model_id: str, label: str, priority: int, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = settings or {}
+    model = {
         "slug": model_id,
         "display_name": f"{label} ({provider.name})",
         "description": f"{label} via {provider.name}",
@@ -65,12 +71,11 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int)
         "supports_reasoning_summary_parameter": True,
         "supports_reasoning_summaries": False,
         "default_reasoning_summary": "auto",
-        "support_verbosity": True,
+        "support_verbosity": bool(settings.get("support_verbosity", False)),
         "default_verbosity": "low",
         "apply_patch_tool_type": "freeform",
-        "web_search_tool_type": "text",
         "truncation_policy": {"mode": "tokens", "limit": 8000},
-        "supports_parallel_tool_calls": True,
+        "supports_parallel_tool_calls": bool(settings.get("supports_parallel_tool_calls", False)),
         "supports_image_detail_original": False,
         "context_window": 1_000_000,
         "max_context_window": 1_000_000,
@@ -78,7 +83,7 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int)
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": ["text"],
-        "supports_search_tool": False,
+        "supports_search_tool": bool(settings.get("supports_search_tool", False)),
         "use_responses_lite": False,
         "model": model_id,
         "displayName": f"{label} ({provider.name})",
@@ -89,10 +94,14 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int)
             {"reasoningEffort": "high", "description": "Thorough"},
         ],
     }
+    web_search_type = settings.get("web_search_tool_type")
+    if web_search_type:
+        model["web_search_tool_type"] = str(web_search_type)
+    return model
 
 
-def build_catalog(provider: Provider) -> dict[str, Any]:
-    models = [_catalog_model(provider, model.id, model.label, index) for index, model in enumerate(provider.models, 1)]
+def build_catalog(provider: Provider, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    models = [_catalog_model(provider, model.id, model.label, index, settings) for index, model in enumerate(provider.models, 1)]
     default = models[0]
     return {
         "models": models,
@@ -106,17 +115,17 @@ def _merge_profile(data: dict[str, Any], provider: Provider, catalog_path: Path)
     result = copy.deepcopy(data)
     result["model"] = provider.models[0].id
     result["model_provider"] = "codexier"
+    result["codexier_provider_id"] = provider.id
     result["model_reasoning_effort"] = "medium"
     result["tool_output_token_limit"] = 8000
     result["model_catalog_json"] = str(catalog_path.resolve())
     providers = result.setdefault("model_providers", {})
     providers["codexier"] = {
         "name": "Codexier",
-        "base_url": provider.base_url,
+        "base_url": provider.base_url.rstrip("/") + "/",
         "wire_api": "responses",
         "wire_specification": "responses",
-        "api_key": provider.api_key,
-        "requires_api_key": True,
+        "experimental_bearer_token": provider.api_key,
         "requires_openai_auth": False,
     }
     profiles = result.setdefault("profiles", {})
@@ -130,14 +139,14 @@ def _merge_profile(data: dict[str, Any], provider: Provider, catalog_path: Path)
     return result
 
 
-def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexProfileResult:
+def apply_codex_profile(provider: Provider, home: Path | None = None, settings: dict[str, Any] | None = None) -> CodexProfileResult:
     if not provider.models:
         raise ConfigError("Provider must contain at least one selected model.")
     root = codex_home(home)
     root.mkdir(parents=True, exist_ok=True)
     config_path = root / "config.toml"
     catalog_path = root / "codexier.models.json"
-    profile_path = root / "codexier.profile.toml"
+    profile_path = root / "codexier.config.toml"
     if config_path.exists():
         try:
             data = tomllib.loads(config_path.read_text(encoding="utf-8"))
@@ -146,7 +155,7 @@ def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexPr
     else:
         data = {}
     backup_config(config_path)
-    catalog = build_catalog(provider)
+    catalog = build_catalog(provider, settings)
     catalog["model_catalog_json"] = str(catalog_path.resolve())
     catalog["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write(catalog_path, (json.dumps(catalog, indent=2) + "\n").encode(), mode=0o600)
@@ -157,7 +166,6 @@ def apply_codex_profile(provider: Provider, home: Path | None = None) -> CodexPr
         "model_provider": "codexier",
         "model_catalog_json": str(catalog_path.resolve()),
         "tool_output_token_limit": 8000,
-        "[profiles.codexier]": {"name": "Codexier"},
     }
     atomic_write(profile_path, tomli_w.dumps(profile).encode(), mode=0o600)
     return CodexProfileResult(config_path, catalog_path, profile_path)

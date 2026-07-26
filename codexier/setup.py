@@ -23,7 +23,7 @@ def normalize_base_url(base_url: str) -> str:
         normalized_path = "/v1"
     else:
         normalized_path = f"{path}/v1"
-    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", ""))
+    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path + "/", "", ""))
 
 
 def provider_from_form(name: str, base_url: str, api_key: str, model_ids: Sequence[str]) -> Provider:

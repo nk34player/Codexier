@@ -1,10 +1,28 @@
+import os
 from pathlib import Path
 
-from main import environment_python, needs_bootstrap, dependency_check_command, script_command
+from codexier.main import (
+    ROOT,
+    VENV,
+    clear_caches,
+    dependency_check_command,
+    environment_python,
+    needs_bootstrap,
+    script_command,
+)
+
+
+def test_launcher_uses_root_virtual_environment():
+    project_root = Path(__file__).parents[1]
+    assert ROOT == project_root
+    assert VENV == project_root / ".venv"
 
 
 def test_environment_python_points_inside_project_venv(tmp_path: Path):
-    expected = tmp_path / ".venv" / "bin" / "python"
+    if os.name == "nt":
+        expected = tmp_path / ".venv" / "Scripts" / "python.exe"
+    else:
+        expected = tmp_path / ".venv" / "bin" / "python"
     assert environment_python(tmp_path) == expected
 
 
@@ -27,3 +45,23 @@ def test_dependency_check_command_checks_runtime_dependencies():
 def test_script_command_uses_project_python(tmp_path: Path):
     command = script_command(tmp_path / ".venv/bin/python", tmp_path / "tools.py", ("--demo",))
     assert command == [str(tmp_path / ".venv/bin/python"), str(tmp_path / "tools.py"), "--demo"]
+
+
+def test_clear_caches_removes_python_and_tool_cache_directories(tmp_path: Path):
+    keep = tmp_path / "keep.txt"
+    keep.write_text("keep")
+    cache_dirs = [
+        tmp_path / ".venv" / "Lib" / "site-packages" / "pkg" / "__pycache__",
+        tmp_path / "nested" / "__pycache__",
+        tmp_path / ".pytest_cache",
+        tmp_path / ".cache",
+        tmp_path / "nested" / "cache",
+    ]
+    for directory in cache_dirs:
+        directory.mkdir(parents=True)
+        (directory / "data").write_text("cache")
+
+    clear_caches(tmp_path)
+
+    assert keep.is_file()
+    assert all(not directory.exists() for directory in cache_dirs)

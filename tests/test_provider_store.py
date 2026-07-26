@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -46,7 +47,8 @@ def test_create_provider_catalog_creates_secure_empty_catalog(tmp_path: Path):
     path = tmp_path / "providers.json"
     create_provider_catalog(path)
     assert json.loads(path.read_text()) == {"version": 1, "providers": []}
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_add_provider_persists_live_models_and_secure_key(tmp_path: Path):
@@ -58,7 +60,8 @@ def test_add_provider_persists_live_models_and_secure_key(tmp_path: Path):
     loaded = ProviderStore(path).get("demo")
     assert loaded.models[0].id == "live-a"
     assert loaded.api_key == "secret"
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_update_provider_replaces_existing_entry(tmp_path: Path):

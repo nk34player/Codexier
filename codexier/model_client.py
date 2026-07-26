@@ -29,7 +29,7 @@ def _models_endpoint(base_url: str) -> str:
         path = "/v1"
     elif not path.endswith("/v1"):
         path += "/v1"
-    return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")) + "/models"
+    return urlunsplit((parsed.scheme, parsed.netloc, path + "/", "", "")) + "models"
 
 
 def parse_models_response(payload: Any) -> tuple[LiveModel, ...]:
