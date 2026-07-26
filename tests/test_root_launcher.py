@@ -1,10 +1,14 @@
+import os
 from pathlib import Path
 
 from main import environment_python, needs_bootstrap, dependency_check_command, script_command
 
 
 def test_environment_python_points_inside_project_venv(tmp_path: Path):
-    expected = tmp_path / ".venv" / "bin" / "python"
+    if os.name == "nt":
+        expected = tmp_path / ".venv" / "Scripts" / "python.exe"
+    else:
+        expected = tmp_path / ".venv" / "bin" / "python"
     assert environment_python(tmp_path) == expected
 
 
