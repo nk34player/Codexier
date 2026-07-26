@@ -331,11 +331,17 @@ class SettingsScreen(Screen[bool | None]):
 
     def _render_settings(self) -> None:
         view = self.query_one("#settings", ListView)
-        view.clear()
         for key, label in self.SETTING_KEYS:
             value = self.settings.get(key)
             display = "OFF" if value in (False, None, "") else str(value).upper()
             view.append(ListItem(Label(f"{'●' if value else '○'}  {label}: {display}"), id=widget_id("setting", key)))
+
+    def _refresh_setting(self, key: str) -> None:
+        label = next(label for setting_key, label in self.SETTING_KEYS if setting_key == key)
+        value = self.settings.get(key)
+        display = "OFF" if value in (False, None, "") else str(value).upper()
+        item = self.query_one(f"#{widget_id('setting', key)}", ListItem)
+        item.query_one(Label).update(f"{'●' if value else '○'}  {label}: {display}")
 
     def _selected_key(self) -> str:
         item = self.query_one("#settings", ListView).highlighted_child
@@ -349,7 +355,7 @@ class SettingsScreen(Screen[bool | None]):
             self.settings[key] = None if self.settings.get(key) else "text"
         else:
             self.settings[key] = not bool(self.settings.get(key, False))
-        self._render_settings()
+        self._refresh_setting(key)
 
     def action_save(self) -> None:
         save_settings(self.catalog_path, self.settings)

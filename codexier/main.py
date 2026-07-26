@@ -101,30 +101,25 @@ def bootstrap(root: Path = ROOT) -> Path:
 
 
 def run_codexier(argv: Sequence[str], root: Path = ROOT) -> int:
-    clear_caches(root)
-    try:
-        python = environment_python(root)
-        if needs_bootstrap(root) or not dependencies_ready(python):
-            python = bootstrap(root)
-        command = [str(python), "-m", "codexier", *argv]
-        return subprocess.run(command, cwd=root).returncode
-    finally:
-        clear_caches(root)
+    python = environment_python(root)
+    if needs_bootstrap(root) or not dependencies_ready(python):
+        python = bootstrap(root)
+    command = [str(python), "-m", "codexier", *argv]
+    return subprocess.run(command, cwd=root).returncode
 
 
 def run_script(script: Path, argv: Sequence[str], root: Path = ROOT) -> int:
-    clear_caches(root)
-    try:
-        python = environment_python(root)
-        if needs_bootstrap(root) or not dependencies_ready(python):
-            python = bootstrap(root)
-        return subprocess.run(script_command(python, script, argv), cwd=root).returncode
-    finally:
-        clear_caches(root)
+    python = environment_python(root)
+    if needs_bootstrap(root) or not dependencies_ready(python):
+        python = bootstrap(root)
+    return subprocess.run(script_command(python, script, argv), cwd=root).returncode
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = tuple(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "--clean-caches":
+        clear_caches()
+        return 0
     if args and args[0] == "--script":
         if len(args) < 2:
             print("Usage: launcher --script SCRIPT [ARGS ...]")
