@@ -33,6 +33,16 @@ def test_build_catalog_can_disable_image_input():
     assert all(model["input_modalities"] == ["text"] for model in catalog["models"])
 
 
+def test_build_catalog_uses_custom_context_profile():
+    catalog = build_catalog(
+        provider(),
+        {"context_window": 200000, "auto_compact_token_limit": 60000},
+    )
+    assert all(model["context_window"] == 200000 for model in catalog["models"])
+    assert all(model["max_context_window"] == 200000 for model in catalog["models"])
+    assert all(model["auto_compact_token_limit"] == 60000 for model in catalog["models"])
+
+
 def test_apply_codex_profile_writes_proxyagent_style_files(tmp_path: Path):
     codex_home = tmp_path / ".codex"
     config = codex_home / "config.toml"

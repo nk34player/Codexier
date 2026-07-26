@@ -14,11 +14,16 @@ import tomli_w
 from .backup import atomic_write, backup_config
 from .errors import ConfigError
 from .models import Provider
-from .settings import DEFAULT_INPUT_MODALITIES
+from .settings import (
+    DEFAULT_AUTO_COMPACT_TOKEN_LIMIT,
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_INPUT_MODALITIES,
+    MAX_CONTEXT_WINDOW,
+)
 
 
-CONTEXT_WINDOW = 250_000
-AUTO_COMPACT_TOKEN_LIMIT = 70_000
+CONTEXT_WINDOW = DEFAULT_CONTEXT_WINDOW
+AUTO_COMPACT_TOKEN_LIMIT = DEFAULT_AUTO_COMPACT_TOKEN_LIMIT
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,7 @@ def applied_provider_id(config_path: Path | None = None) -> str | None:
 
 def _catalog_model(provider: Provider, model_id: str, label: str, priority: int, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     settings = settings or {}
+    context_window, compact_limit = _context_limits(settings)
     model = {
         "slug": model_id,
         "display_name": f"{label} ({provider.name})",
@@ -82,9 +88,9 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int,
         "truncation_policy": {"mode": "tokens", "limit": 8000},
         "supports_parallel_tool_calls": bool(settings.get("supports_parallel_tool_calls", False)),
         "supports_image_detail_original": False,
-        "context_window": CONTEXT_WINDOW,
-        "max_context_window": CONTEXT_WINDOW,
-        "auto_compact_token_limit": AUTO_COMPACT_TOKEN_LIMIT,
+        "context_window": context_window,
+        "max_context_window": context_window,
+        "auto_compact_token_limit": compact_limit,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": _input_modalities(settings),
@@ -112,6 +118,21 @@ def _input_modalities(settings: dict[str, Any]) -> list[str]:
     if value == ["text", "image"]:
         return ["text", "image"]
     return list(DEFAULT_INPUT_MODALITIES)
+
+
+def _context_limits(settings: dict[str, Any]) -> tuple[int, int]:
+    context_window = settings.get("context_window", CONTEXT_WINDOW)
+    compact_limit = settings.get("auto_compact_token_limit", AUTO_COMPACT_TOKEN_LIMIT)
+    if (
+        isinstance(context_window, int)
+        and not isinstance(context_window, bool)
+        and 1 <= context_window <= MAX_CONTEXT_WINDOW
+        and isinstance(compact_limit, int)
+        and not isinstance(compact_limit, bool)
+        and 1 <= compact_limit < context_window
+    ):
+        return context_window, compact_limit
+    return CONTEXT_WINDOW, AUTO_COMPACT_TOKEN_LIMIT
 
 
 def build_catalog(provider: Provider, settings: dict[str, Any] | None = None) -> dict[str, Any]:

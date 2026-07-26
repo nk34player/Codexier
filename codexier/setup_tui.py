@@ -11,13 +11,19 @@ from textual.widgets import Button, Footer, Header, Input, Label, ListItem, List
 
 from .model_client import ModelFetchError, fetch_models
 from .models import ModelDefinition, Provider
-from .errors import CatalogError, ValidationError
+from .errors import CatalogError, ConfigError, ValidationError
 from .provider_store import add_provider, delete_provider, update_provider
 from .setup import normalize_base_url, provider_from_live_models
 from .tui import widget_id
 from .models import CodexSettings, mask_api_key
 from .codex_profile import applied_provider_id
-from .settings import load_settings, save_settings
+from .settings import (
+    DEFAULT_AUTO_COMPACT_TOKEN_LIMIT,
+    DEFAULT_CONTEXT_WINDOW,
+    MAX_CONTEXT_WINDOW,
+    load_settings,
+    save_settings,
+)
 
 
 _HIDDEN_PROVIDER_MANAGER_BINDINGS = [
@@ -42,9 +48,9 @@ class SetupApp(App[bool]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     Header, Footer { background: #111a33; color: #8be9fd; }
-    #shell { width: 90%; height: auto; min-height: 24; margin: 1 5; padding: 2 3; border: round #3b82f6; background: #131d38; }
+    #shell { width: 96%; height: 1fr; min-height: 24; margin: 1 2; padding: 2 4; border: round #3b82f6; background: #131d38; }
     #title { color: #8be9fd; text-style: bold; height: 2; }
-    #intro { color: #c7d2fe; height: 3; }
+    #intro { color: #c7d2fe; height: auto; min-height: 3; }
     .field-label { color: #8be9fd; margin-top: 1; }
     Input { height: 3; margin: 0 0 1 0; border: round #536d9e; background: #0b1020; color: #ffffff; }
     Input:focus { border: round #50fa7b; background: #111d3b; }
@@ -141,9 +147,10 @@ class ProviderManagerApp(App[Provider | None]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     Header, Footer { background: #111a33; color: #8be9fd; }
-    #shell { width: 94%; height: 1fr; margin: 1 3; }
-    #brand { height: 5; padding: 1 2; background: #131d38; border: round #3b82f6; color: #8be9fd; }
-    #providers { width: 1fr; height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #shell { width: 98%; height: 1fr; margin: 1 1; padding: 1 2; }
+    #brand { height: auto; min-height: 5; padding: 1 2; background: #131d38; border: round #3b82f6; color: #8be9fd; }
+    #providers { width: 1fr; height: 1fr; min-height: 12; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #providers > ListItem { min-height: 5; padding: 1 3; }
     #actions { height: 4; margin-top: 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
@@ -171,6 +178,11 @@ class ProviderManagerApp(App[Provider | None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="shell"):
+            yield Static(
+                "CODEXIER PROVIDERS\n"
+                "Select a saved provider to apply it, or add a provider to fetch live models.",
+                id="brand",
+            )
             yield ProviderListView(id="providers")
             with Horizontal(id="actions"):
                 yield Button("Use selected  ›", id="use", variant="primary")
@@ -313,9 +325,9 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
-    #shell { width: 82%; height: auto; margin: 2 9; padding: 2 3; border: round #3b82f6; background: #131d38; }
-    #settings { height: auto; border: round #263b68; background: #0f1730; }
-    ListItem { padding: 1 2; }
+    #shell { width: 96%; height: 1fr; margin: 1 2; padding: 2 4; border: round #3b82f6; background: #131d38; }
+    #settings { height: 1fr; min-height: 10; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #settings > ListItem { min-height: 5; padding: 1 3; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
     #actions { height: 4; }
     Button { width: 1fr; background: #2563eb; color: white; }
@@ -335,7 +347,16 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         ("supports_search_tool", "Search tool"),
         ("web_search_tool_type", "Web search type"),
         ("input_modalities", "Input modalities"),
+        ("context_profiles", "Context profiles"),
     )
+    SETTING_DESCRIPTIONS = {
+        "supports_parallel_tool_calls": "Allows Codex to issue multiple independent tool calls together.",
+        "support_verbosity": "Controls whether the provider receives Codex's response-verbosity preference.",
+        "supports_search_tool": "Enables search-related tool support for generated Codex models.",
+        "web_search_tool_type": "Selects the configured web-search mode sent to Codex.",
+        "input_modalities": "Controls whether models accept text only or text plus images.",
+        "context_profiles": "Configures maximum context tokens and when automatic compacting begins.",
+    }
 
     def __init__(self, catalog_path):
         super().__init__()
@@ -346,7 +367,11 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static("CODEXIER SETTINGS")
-            yield Static("↑↓ move · Space toggle · Enter save · Esc back", id="status")
+            yield Static(
+                "Choose a setting to change its value. Each entry includes a short explanation.\n"
+                "↑↓ move · Space toggle · Enter open/save · Esc back",
+                id="status",
+            )
             yield ListView(id="settings")
             with Horizontal(id="actions"):
                 yield Button("Save settings  ›", id="save", variant="primary")
@@ -360,21 +385,39 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     def _render_settings(self) -> None:
         view = self.query_one("#settings", ListView)
         for key, label in self.SETTING_KEYS:
-            value = self.settings.get(key)
+            value = self._setting_value(key)
             display = self._setting_display(key, value)
-            view.append(ListItem(Label(f"{'●' if value else '○'}  {label}: {display}"), id=widget_id("setting", key)))
+            explanation = self.SETTING_DESCRIPTIONS[key]
+            view.append(
+                ListItem(
+                    Label(f"{'●' if value else '○'}  {label}: {display}\n   [dim]{explanation}[/dim]"),
+                    id=widget_id("setting", key),
+                )
+            )
 
     def _refresh_setting(self, key: str) -> None:
         label = next(label for setting_key, label in self.SETTING_KEYS if setting_key == key)
-        value = self.settings.get(key)
+        value = self._setting_value(key)
         display = self._setting_display(key, value)
+        explanation = self.SETTING_DESCRIPTIONS[key]
         item = self.query_one(f"#{widget_id('setting', key)}", ListItem)
-        item.query_one(Label).update(f"{'●' if value else '○'}  {label}: {display}")
+        item.query_one(Label).update(f"{'●' if value else '○'}  {label}: {display}\n   [dim]{explanation}[/dim]")
+
+    def _setting_value(self, key: str) -> object:
+        if key == "context_profiles":
+            return (
+                self.settings["context_window"],
+                self.settings["auto_compact_token_limit"],
+            )
+        return self.settings.get(key)
 
     @staticmethod
     def _setting_display(key: str, value: object) -> str:
         if key == "input_modalities":
             return "TEXT + IMAGES" if value == ["text", "image"] else "TEXT ONLY"
+        if key == "context_profiles":
+            maximum, compact = value
+            return f"{maximum:,} MAX / {compact:,} COMPACT"
         return "OFF" if value in (False, None, "") else str(value).upper()
 
     def _selected_key(self) -> str:
@@ -394,7 +437,96 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         self._refresh_setting(key)
 
     def action_save(self) -> None:
+        if self._selected_key() == "context_profiles":
+            self.app.push_screen(ContextProfilesScreen(self.catalog_path), self._context_profiles_finished)
+            return
         save_settings(self.catalog_path, self.settings)
+        self.dismiss(True)
+
+    def _context_profiles_finished(self, changed: bool | None) -> None:
+        if changed:
+            self.settings = load_settings(self.catalog_path)
+            self._refresh_setting("context_profiles")
+            self.query_one("#status", Static).update("Context profile saved. Press Enter to save settings.")
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self.action_save()
+        elif event.button.id == "back":
+            self.action_cancel()
+
+
+class ContextProfilesScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
+    TITLE = "Codexier"
+    CSS = """
+    Screen { background: #0b1020; color: #e7eefc; }
+    #shell { width: 94%; height: auto; max-height: 1fr; margin: 2 3; padding: 2 4; border: round #3b82f6; background: #131d38; }
+    #intro { color: #c7d2fe; height: auto; min-height: 3; }
+    .field-label { color: #8be9fd; margin-top: 1; }
+    Input { height: 3; margin: 0 0 1 0; border: round #536d9e; background: #0b1020; color: #ffffff; }
+    Input:focus { border: round #50fa7b; background: #111d3b; }
+    #actions { height: 4; margin-top: 1; }
+    Button { width: 1fr; background: #2563eb; color: white; }
+    #back { background: #374151; }
+    #status { height: 4; color: #8be9fd; padding: 1 0; }
+    .error { color: #ff6b8a; }
+    """
+    BINDINGS = [
+        Binding("enter", "save", "Save profile", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
+    ]
+
+    def __init__(self, catalog_path):
+        super().__init__()
+        self.catalog_path = catalog_path
+        self.settings = load_settings(catalog_path)
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="shell"):
+            yield Static("CONTEXT PROFILES")
+            yield Static(
+                "Set token limits used in every generated Codex model catalog.\n"
+                f"Maximum context cannot exceed {MAX_CONTEXT_WINDOW:,} tokens. Compacting must be lower.",
+                id="intro",
+            )
+            yield Label("MAXIMUM CONTEXT TOKENS", classes="field-label")
+            yield Input(placeholder="250000", id="context-window", type="integer")
+            yield Label("COMPACT AFTER TOKENS", classes="field-label")
+            yield Input(placeholder="70000", id="compact-limit", type="integer")
+            with Horizontal(id="actions"):
+                yield Button("Save profile  ›", id="save", variant="primary")
+                yield Button("Back", id="back")
+            yield Static("Enter saves · Esc goes back", id="status")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#context-window", Input).value = str(self.settings["context_window"])
+        self.query_one("#compact-limit", Input).value = str(self.settings["auto_compact_token_limit"])
+        self.query_one("#context-window", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "context-window":
+            self.query_one("#compact-limit", Input).focus()
+        else:
+            self.action_save()
+
+    def action_save(self) -> None:
+        status = self.query_one("#status", Static)
+        try:
+            context_window = int(self.query_one("#context-window", Input).value.strip())
+            compact_limit = int(self.query_one("#compact-limit", Input).value.strip())
+            updated = dict(self.settings)
+            updated["context_window"] = context_window
+            updated["auto_compact_token_limit"] = compact_limit
+            save_settings(self.catalog_path, updated)
+        except (ValueError, ConfigError, OSError) as exc:
+            status.update(str(exc) or "Enter valid whole-number token limits.")
+            status.add_class("error")
+            return
         self.dismiss(True)
 
     def action_cancel(self) -> None:
@@ -409,6 +541,19 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
 
 class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | None]):
     TITLE = "Codexier"
+    CSS = """
+    Screen { background: #0b1020; color: #e7eefc; }
+    #shell { width: 94%; height: auto; margin: 2 3; padding: 2 4; border: round #3b82f6; background: #131d38; }
+    #intro { color: #c7d2fe; height: auto; min-height: 3; }
+    .field-label { color: #8be9fd; margin-top: 1; }
+    Input { height: 3; margin: 0 0 1 0; border: round #536d9e; background: #0b1020; color: #ffffff; }
+    Input:focus { border: round #50fa7b; background: #111d3b; }
+    #form-actions { height: 4; margin-top: 1; }
+    Button { width: 1fr; background: #2563eb; color: white; }
+    #back { background: #374151; }
+    #status { height: 4; color: #8be9fd; padding: 1 0; }
+    .error { color: #ff6b8a; }
+    """
     BINDINGS = [
         Binding("enter", "submit", "Next / Fetch models", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
@@ -421,18 +566,23 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
         self.existing_provider = provider
 
     def compose(self) -> ComposeResult:
-        yield Static("PROVIDER  /  ADD OR EDIT", id="title")
-        yield Static("Enter credentials, then fetch live models.", id="intro")
-        yield Label("PROVIDER NAME", classes="field-label")
-        yield Input(placeholder="Provider name", id="name")
-        yield Label("BASE URL", classes="field-label")
-        yield Input(placeholder="Base URL (https://.../v1)", id="url")
-        yield Label("API KEY", classes="field-label")
-        yield Input(placeholder="API key", password=True, id="key")
-        with Horizontal(id="form-actions"):
-            yield Button("Fetch live models  ›", id="save", variant="primary")
-            yield Button("Back to main menu", id="back")
-        yield Static("", id="status")
+        with Vertical(id="shell"):
+            yield Static("PROVIDER  /  ADD OR EDIT", id="title")
+            yield Static(
+                "Enter the provider connection details. Codexier will fetch its live model list "
+                "before you choose which models to save.",
+                id="intro",
+            )
+            yield Label("PROVIDER NAME", classes="field-label")
+            yield Input(placeholder="Provider name", id="name")
+            yield Label("BASE URL", classes="field-label")
+            yield Input(placeholder="Base URL (https://.../v1)", id="url")
+            yield Label("API KEY", classes="field-label")
+            yield Input(placeholder="API key", password=True, id="key")
+            with Horizontal(id="form-actions"):
+                yield Button("Fetch live models  ›", id="save", variant="primary")
+                yield Button("Back to main menu", id="back")
+            yield Static("Enter advances fields · Esc goes back", id="status")
         yield Footer()
 
     def action_cancel(self) -> None:
@@ -530,9 +680,10 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
-    #shell { width: 90%; height: 90%; margin: 2 5; padding: 2 3; border: round #3b82f6; background: #131d38; }
-    #models { width: 1fr; height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
-    ListItem { padding: 1 2; }
+    #shell { width: 96%; height: 1fr; margin: 1 2; padding: 2 4; border: round #3b82f6; background: #131d38; }
+    #intro { color: #c7d2fe; height: auto; min-height: 3; }
+    #models { width: 1fr; height: 1fr; min-height: 12; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #models > ListItem { min-height: 4; padding: 1 3; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
     #count { color: #50fa7b; height: 2; }
     #actions { height: 4; }
@@ -555,6 +706,11 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static(f"LIVE MODELS  /  {self.provider_name}")
+            yield Static(
+                "Select up to five models to make available through Codexier. "
+                "Press Space to toggle a model, then Enter to save.",
+                id="intro",
+            )
             yield Static("LOADING LIVE MODELS …", id="count")
             yield ListView(id="models")
             with Horizontal(id="actions"):
@@ -624,7 +780,8 @@ def run_provider_manager(
 class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
-    #shell { width: 80%; height: auto; margin: 3 10; padding: 2 3; border: round #3b82f6; background: #131d38; }
+    #shell { width: 96%; height: auto; max-height: 1fr; margin: 2 2; padding: 2 4; border: round #3b82f6; background: #131d38; }
+    #intro { color: #c7d2fe; height: auto; min-height: 3; }
     #summary { height: auto; padding: 1 0; color: #c7d2fe; }
     Button { width: 100%; margin-top: 1; background: #2563eb; color: white; }
     #cancel { background: #374151; }
@@ -648,6 +805,11 @@ class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static("APPLY CODEX PROFILE")
+            yield Static(
+                "Review the selected provider and models. Applying writes the Codex profile "
+                "and model catalog, then Codex can use this configuration.",
+                id="intro",
+            )
             yield Static(
                 f"Provider  {self.provider.name}\n"
                 f"Base URL  {self.settings.base_url}\n"
