@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.screen import Screen
 from textual.css.query import NoMatches
 from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Static
@@ -37,10 +40,48 @@ class _ProviderManagerShortcutIsolation:
         """Prevent manager shortcuts from leaking into a child screen."""
 
 
+class ProviderListItem(ListItem):
+    class Clicked(Message):
+        def __init__(self, item: "ProviderListItem") -> None:
+            self.item = item
+            super().__init__()
+
+    def _on_click(self, _: events.Click) -> None:
+        self.post_message(self.Clicked(self))
+
+
 class ProviderListView(ListView):
+    class Confirmed(Message):
+        def __init__(self, list_view: "ProviderListView", item: ListItem) -> None:
+            self.list_view = list_view
+            self.item = item
+            super().__init__()
+
     BINDINGS = [
         Binding("enter", "select_cursor", "Use provider"),
     ]
+    _last_click_item: ListItem | None = None
+    _last_click_at = 0.0
+
+    @on(ProviderListItem.Clicked)
+    def _on_provider_item_clicked(self, event: ProviderListItem.Clicked) -> None:
+        """Highlight on one click; select only on a double-click."""
+        event.stop()
+        self.focus()
+        self.index = self._nodes.index(event.item)
+        now = time.monotonic()
+        is_double_click = (
+            event.item is self._last_click_item
+            and now - self._last_click_at <= 0.4
+        )
+        self._last_click_item = None if is_double_click else event.item
+        self._last_click_at = 0.0 if is_double_click else now
+        if is_double_click:
+            self.post_message(self.Confirmed(self, event.item))
+
+    def action_select_cursor(self) -> None:
+        if self.highlighted_child is not None:
+            self.post_message(self.Confirmed(self, self.highlighted_child))
 
 
 class SetupApp(App[bool]):
@@ -180,7 +221,7 @@ class ProviderManagerApp(App[Provider | None]):
         with Vertical(id="shell"):
             yield Static(
                 "CODEXIER PROVIDERS\n"
-                "Select a saved provider to apply it, or add a provider to fetch live models.",
+                "Click once to select a provider. Press Enter or double-click to open the apply screen.",
                 id="brand",
             )
             yield ProviderListView(id="providers")
@@ -205,7 +246,7 @@ class ProviderManagerApp(App[Provider | None]):
         view = self.query_one("#providers", ListView)
         await view.clear()
         for provider in self.providers:
-            await view.append(ListItem(self._provider_label(provider), id=widget_id("provider", provider.id)))
+            await view.append(ProviderListItem(self._provider_label(provider), id=widget_id("provider", provider.id)))
         if self.providers:
             view.index = 0
             self._update_selected_status(self.providers[0])
@@ -296,7 +337,8 @@ class ProviderManagerApp(App[Provider | None]):
             if provider:
                 self.exit(provider)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
+    @on(ProviderListView.Confirmed)
+    def on_provider_confirmed(self, event: ProviderListView.Confirmed) -> None:
         self.action_use()
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
