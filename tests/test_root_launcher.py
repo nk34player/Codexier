@@ -7,6 +7,7 @@ from codexier.main import (
     clear_caches,
     dependency_check_command,
     environment_python,
+    main,
     needs_bootstrap,
     script_command,
 )
@@ -65,3 +66,11 @@ def test_clear_caches_removes_python_and_tool_cache_directories(tmp_path: Path):
 
     assert keep.is_file()
     assert all(not directory.exists() for directory in cache_dirs)
+
+
+def test_clean_caches_requires_an_explicit_launcher_option(monkeypatch):
+    calls = []
+    monkeypatch.setattr("codexier.main.clear_caches", lambda: calls.append(True))
+
+    assert main(("--clean-caches",)) == 0
+    assert calls == [True]

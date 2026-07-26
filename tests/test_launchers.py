@@ -12,3 +12,8 @@ def test_root_launchers_reference_package_launcher():
     assert "cd" in command
     assert "cd /d" in batch.lower()
     assert "python3" in linux
+    assert "Press Enter to close" in command
+    assert "pause" in batch.lower()
+    assert "mode con: cols=160 lines=50" in batch.lower()
+    assert "Press Enter to close" in linux
+    assert "160t" in command
