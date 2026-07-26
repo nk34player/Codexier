@@ -16,6 +16,10 @@ from .errors import ConfigError
 from .models import Provider
 
 
+CONTEXT_WINDOW = 250_000
+AUTO_COMPACT_TOKEN_LIMIT = 70_000
+
+
 @dataclass(frozen=True)
 class CodexProfileResult:
     config_path: Path
@@ -77,9 +81,9 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int,
         "truncation_policy": {"mode": "tokens", "limit": 8000},
         "supports_parallel_tool_calls": bool(settings.get("supports_parallel_tool_calls", False)),
         "supports_image_detail_original": False,
-        "context_window": 1_000_000,
-        "max_context_window": 1_000_000,
-        "auto_compact_token_limit": 900_000,
+        "context_window": CONTEXT_WINDOW,
+        "max_context_window": CONTEXT_WINDOW,
+        "auto_compact_token_limit": AUTO_COMPACT_TOKEN_LIMIT,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": ["text"],

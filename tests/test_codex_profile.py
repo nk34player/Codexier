@@ -18,8 +18,9 @@ def test_build_catalog_contains_codex_model_metadata():
     catalog = build_catalog(provider())
     assert catalog["default_model"] == "gpt-5.2"
     assert catalog["models"][0]["slug"] == "gpt-5.2"
-    assert catalog["models"][0]["context_window"] == 1000000
-    assert catalog["models"][0]["auto_compact_token_limit"] == 900000
+    assert all(model["context_window"] == 250000 for model in catalog["models"])
+    assert all(model["max_context_window"] == 250000 for model in catalog["models"])
+    assert all(model["auto_compact_token_limit"] == 70000 for model in catalog["models"])
     assert catalog["models"][0]["supports_search_tool"] is False
     assert "web_search_tool_type" not in catalog["models"][0]
     assert catalog["models"][0]["supports_parallel_tool_calls"] is False
