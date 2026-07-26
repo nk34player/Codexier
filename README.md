@@ -18,6 +18,13 @@ On Windows, double-click `codexier.bat` or run it from Command Prompt:
 codexier.bat
 ```
 
+On Linux, make launcher executable once, then run it:
+
+```bash
+chmod +x codexier.sh
+./codexier.sh
+```
+
 The launcher creates `.venv`, installs runtime dependencies when needed, and
 starts Codexier with the project environment.
 
@@ -26,7 +33,11 @@ and API key. Codexier discovers models through `/v1/models` and stores the
 catalog locally.
 
 After selecting models, choose **Apply to Codex** to update the detected Codex
-configuration. Use `--restart` to restart Codex when supported.
+configuration. On Windows, if the ChatGPT desktop app is already running,
+Codexier gracefully closes its current-user ChatGPT processes and launches the
+app again so the new provider is loaded. If ChatGPT is not running, it remains
+closed. Use `--no-restart` to opt out; `--restart` still explicitly restarts
+Codex where supported.
 
 ## Options
 

@@ -6,7 +6,7 @@ SCRIPT_DIR="${0:A:h}"
 cd "$SCRIPT_DIR"
 
 if [[ -x "$SCRIPT_DIR/.venv/bin/python" ]]; then
-  exec "$SCRIPT_DIR/.venv/bin/python" main.py "$@"
+  exec "$SCRIPT_DIR/.venv/bin/python" codexier/main.py "$@"
 fi
 
-exec python3 main.py "$@"
+exec python3 codexier/main.py "$@"

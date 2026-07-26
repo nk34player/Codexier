@@ -1,13 +1,14 @@
 """Single-command codexier launcher.
 
-Run from project root with ``python main.py``. It creates the local virtual
-environment when missing, installs the project dependencies, then re-executes
-codexier using that environment's interpreter.
+Run through one of root launchers. It creates local virtual environment when
+missing, installs project dependencies, then re-executes Codexier using that
+environment's interpreter.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import venv
@@ -15,9 +16,19 @@ from pathlib import Path
 from typing import Sequence
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 VENV = ROOT / ".venv"
 RUNTIME_IMPORTS = "import httpx, rich, textual, tomli_w"
+CACHE_DIRECTORY_NAMES = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".cache",
+        "cache",
+    }
+)
 
 
 def environment_python(root: Path = ROOT) -> Path:
@@ -45,6 +56,34 @@ def dependencies_ready(python: Path) -> bool:
     return result.returncode == 0
 
 
+def clear_caches(root: Path = ROOT) -> None:
+    """Remove generated Python and tool caches below the project root.
+
+    Cache cleanup is best-effort: a locked cache file must not prevent
+    Codexier from starting. The project root is the cleanup boundary, so
+    unrelated files outside this checkout are never touched.
+    """
+    root = root.resolve()
+    try:
+        candidates = sorted(
+            (
+                path
+                for path in root.rglob("*")
+                if path.is_dir() and path.name in CACHE_DIRECTORY_NAMES
+            ),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+    except OSError:
+        return
+    for cache_dir in candidates:
+        try:
+            cache_dir.relative_to(root)
+            shutil.rmtree(cache_dir, ignore_errors=True)
+        except (OSError, ValueError):
+            continue
+
+
 def script_command(python: Path, script: Path, argv: Sequence[str]) -> list[str]:
     return [str(python), str(script), *argv]
 
@@ -62,25 +101,33 @@ def bootstrap(root: Path = ROOT) -> Path:
 
 
 def run_codexier(argv: Sequence[str], root: Path = ROOT) -> int:
-    python = environment_python(root)
-    if needs_bootstrap(root) or not dependencies_ready(python):
-        python = bootstrap(root)
-    command = [str(python), "-m", "codexier", *argv]
-    return subprocess.run(command, cwd=root).returncode
+    clear_caches(root)
+    try:
+        python = environment_python(root)
+        if needs_bootstrap(root) or not dependencies_ready(python):
+            python = bootstrap(root)
+        command = [str(python), "-m", "codexier", *argv]
+        return subprocess.run(command, cwd=root).returncode
+    finally:
+        clear_caches(root)
 
 
 def run_script(script: Path, argv: Sequence[str], root: Path = ROOT) -> int:
-    python = environment_python(root)
-    if needs_bootstrap(root) or not dependencies_ready(python):
-        python = bootstrap(root)
-    return subprocess.run(script_command(python, script, argv), cwd=root).returncode
+    clear_caches(root)
+    try:
+        python = environment_python(root)
+        if needs_bootstrap(root) or not dependencies_ready(python):
+            python = bootstrap(root)
+        return subprocess.run(script_command(python, script, argv), cwd=root).returncode
+    finally:
+        clear_caches(root)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = tuple(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "--script":
         if len(args) < 2:
-            print("Usage: python main.py --script SCRIPT [ARGS ...]")
+            print("Usage: launcher --script SCRIPT [ARGS ...]")
             return 2
         return run_script((ROOT / args[1]).resolve(), args[2:])
     return run_codexier(args)
