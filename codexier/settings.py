@@ -6,11 +6,14 @@ from typing import Any
 
 from .errors import ConfigError
 
+DEFAULT_INPUT_MODALITIES = ["text", "image"]
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "supports_parallel_tool_calls": False,
     "support_verbosity": False,
     "supports_search_tool": False,
     "web_search_tool_type": None,
+    "input_modalities": DEFAULT_INPUT_MODALITIES,
 }
 
 

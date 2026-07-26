@@ -334,6 +334,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         ("support_verbosity", "Response verbosity"),
         ("supports_search_tool", "Search tool"),
         ("web_search_tool_type", "Web search type"),
+        ("input_modalities", "Input modalities"),
     )
 
     def __init__(self, catalog_path):
@@ -360,15 +361,21 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         view = self.query_one("#settings", ListView)
         for key, label in self.SETTING_KEYS:
             value = self.settings.get(key)
-            display = "OFF" if value in (False, None, "") else str(value).upper()
+            display = self._setting_display(key, value)
             view.append(ListItem(Label(f"{'●' if value else '○'}  {label}: {display}"), id=widget_id("setting", key)))
 
     def _refresh_setting(self, key: str) -> None:
         label = next(label for setting_key, label in self.SETTING_KEYS if setting_key == key)
         value = self.settings.get(key)
-        display = "OFF" if value in (False, None, "") else str(value).upper()
+        display = self._setting_display(key, value)
         item = self.query_one(f"#{widget_id('setting', key)}", ListItem)
         item.query_one(Label).update(f"{'●' if value else '○'}  {label}: {display}")
+
+    @staticmethod
+    def _setting_display(key: str, value: object) -> str:
+        if key == "input_modalities":
+            return "TEXT + IMAGES" if value == ["text", "image"] else "TEXT ONLY"
+        return "OFF" if value in (False, None, "") else str(value).upper()
 
     def _selected_key(self) -> str:
         item = self.query_one("#settings", ListView).highlighted_child
@@ -380,6 +387,8 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         key = self._selected_key()
         if key == "web_search_tool_type":
             self.settings[key] = None if self.settings.get(key) else "text"
+        elif key == "input_modalities":
+            self.settings[key] = ["text"] if self.settings.get(key) == ["text", "image"] else ["text", "image"]
         else:
             self.settings[key] = not bool(self.settings.get(key, False))
         self._refresh_setting(key)

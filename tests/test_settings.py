@@ -12,6 +12,7 @@ def test_settings_are_created_next_to_provider_catalog(tmp_path: Path):
     provider_path = tmp_path / "providers.json"
     settings = load_settings(provider_path)
     assert settings == DEFAULT_SETTINGS
+    assert settings["input_modalities"] == ["text", "image"]
     assert (tmp_path / "codexier.settings.json").exists()
 
 
@@ -22,6 +23,7 @@ def test_settings_round_trip(tmp_path: Path):
         "support_verbosity": False,
         "supports_search_tool": True,
         "web_search_tool_type": "text",
+        "input_modalities": ["text"],
     }
     save_settings(provider_path, settings)
     assert load_settings(provider_path) == settings
@@ -39,6 +41,24 @@ def test_settings_toggle_updates_the_existing_item_without_duplicate_ids(tmp_pat
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
             assert screen.settings["supports_parallel_tool_calls"] is True
-            assert len(screen.query_one("#settings").children) == 4
+            assert len(screen.query_one("#settings").children) == 5
+
+    asyncio.run(scenario())
+
+
+def test_settings_toggle_switches_input_modalities(tmp_path: Path):
+    async def scenario() -> None:
+        app = App()
+        async with app.run_test() as pilot:
+            app.push_screen(SettingsScreen(tmp_path / "providers.json"))
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, SettingsScreen)
+            settings_view = screen.query_one("#settings")
+            settings_view.index = 4
+            await pilot.press("space")
+            assert screen.settings["input_modalities"] == ["text"]
+            await pilot.press("space")
+            assert screen.settings["input_modalities"] == ["text", "image"]
 
     asyncio.run(scenario())

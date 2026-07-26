@@ -25,6 +25,12 @@ def test_build_catalog_contains_codex_model_metadata():
     assert "web_search_tool_type" not in catalog["models"][0]
     assert catalog["models"][0]["supports_parallel_tool_calls"] is False
     assert catalog["models"][0]["support_verbosity"] is False
+    assert catalog["models"][0]["input_modalities"] == ["text", "image"]
+
+
+def test_build_catalog_can_disable_image_input():
+    catalog = build_catalog(provider(), {"input_modalities": ["text"]})
+    assert all(model["input_modalities"] == ["text"] for model in catalog["models"])
 
 
 def test_apply_codex_profile_writes_proxyagent_style_files(tmp_path: Path):

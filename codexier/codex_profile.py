@@ -14,6 +14,7 @@ import tomli_w
 from .backup import atomic_write, backup_config
 from .errors import ConfigError
 from .models import Provider
+from .settings import DEFAULT_INPUT_MODALITIES
 
 
 CONTEXT_WINDOW = 250_000
@@ -86,7 +87,7 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int,
         "auto_compact_token_limit": AUTO_COMPACT_TOKEN_LIMIT,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
-        "input_modalities": ["text"],
+        "input_modalities": _input_modalities(settings),
         "supports_search_tool": bool(settings.get("supports_search_tool", False)),
         "use_responses_lite": False,
         "model": model_id,
@@ -102,6 +103,15 @@ def _catalog_model(provider: Provider, model_id: str, label: str, priority: int,
     if web_search_type:
         model["web_search_tool_type"] = str(web_search_type)
     return model
+
+
+def _input_modalities(settings: dict[str, Any]) -> list[str]:
+    value = settings.get("input_modalities", DEFAULT_INPUT_MODALITIES)
+    if value == ["text"]:
+        return ["text"]
+    if value == ["text", "image"]:
+        return ["text", "image"]
+    return list(DEFAULT_INPUT_MODALITIES)
 
 
 def build_catalog(provider: Provider, settings: dict[str, Any] | None = None) -> dict[str, Any]:
