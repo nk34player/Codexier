@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.css.query import NoMatches
@@ -17,6 +18,23 @@ from .tui import widget_id
 from .models import CodexSettings, mask_api_key
 from .codex_profile import applied_provider_id
 from .settings import load_settings, save_settings
+
+
+_HIDDEN_PROVIDER_MANAGER_BINDINGS = [
+    Binding(key, "ignore_manager_shortcut", show=False)
+    for key in ("a", "e", "d", "q", "s")
+]
+
+
+class _ProviderManagerShortcutIsolation:
+    def action_ignore_manager_shortcut(self) -> None:
+        """Prevent manager shortcuts from leaking into a child screen."""
+
+
+class ProviderListView(ListView):
+    BINDINGS = [
+        Binding("enter", "select_cursor", "Use provider"),
+    ]
 
 
 class SetupApp(App[bool]):
@@ -35,6 +53,10 @@ class SetupApp(App[bool]):
     .error { color: #ff6b8a; }
     .applied { color: #50fa7b; text-style: bold; }
     """
+    BINDINGS = [
+        Binding("enter", "submit", "Next / Fetch models", priority=True),
+        Binding("escape", "quit", "Quit", priority=True),
+    ]
 
     def __init__(self, catalog_path):
         super().__init__()
@@ -56,13 +78,18 @@ class SetupApp(App[bool]):
         yield Footer()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "name":
+        self._advance_or_submit(event.input)
+
+    def action_submit(self) -> None:
+        focused = self.focused
+        self._advance_or_submit(focused if isinstance(focused, Input) else None)
+
+    def _advance_or_submit(self, input_widget: Input | None) -> None:
+        if input_widget is not None and input_widget.id == "name":
             self.query_one("#url", Input).focus()
             return
-        if event.input.id == "url":
+        if input_widget is not None and input_widget.id == "url":
             self.query_one("#key", Input).focus()
-            return
-        if event.input.id != "key":
             return
         self._submit_form()
 
@@ -128,7 +155,6 @@ class ProviderManagerApp(App[Provider | None]):
         ("a", "add", "Add provider"),
         ("e", "edit", "Edit provider"),
         ("d", "remove", "Delete provider"),
-        ("enter", "use", "Use provider"),
         ("q", "quit", "Quit"),
         ("s", "settings", "Settings"),
     ]
@@ -145,7 +171,7 @@ class ProviderManagerApp(App[Provider | None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="shell"):
-            yield ListView(id="providers")
+            yield ProviderListView(id="providers")
             with Horizontal(id="actions"):
                 yield Button("Use selected  ›", id="use", variant="primary")
                 yield Button("＋ Add", id="add")
@@ -283,7 +309,7 @@ class ProviderManagerApp(App[Provider | None]):
         self.query_one("#status", Static).update(f"Saved {provider.name}. Select it and press Enter to continue.")
 
 
-class SettingsScreen(Screen[bool | None]):
+class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
@@ -298,8 +324,9 @@ class SettingsScreen(Screen[bool | None]):
     """
     BINDINGS = [
         ("space", "toggle", "Toggle setting"),
-        ("enter", "save", "Save settings"),
-        ("escape", "cancel", "Back"),
+        Binding("enter", "save", "Save settings", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
 
     SETTING_KEYS = (
@@ -371,11 +398,12 @@ class SettingsScreen(Screen[bool | None]):
             self.action_cancel()
 
 
-class ProviderFormScreen(Screen[Provider | None]):
+class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | None]):
     TITLE = "Codexier"
     BINDINGS = [
-        ("enter", "submit", "Fetch models"),
-        ("escape", "cancel", "Back"),
+        Binding("enter", "submit", "Next / Fetch models", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
 
     def __init__(self, catalog_path, provider: Provider | None):
@@ -402,7 +430,8 @@ class ProviderFormScreen(Screen[Provider | None]):
         self.dismiss(None)
 
     def action_submit(self) -> None:
-        self._submit_form()
+        focused = self.focused
+        self._advance_or_submit(focused if isinstance(focused, Input) else None)
 
     def on_mount(self) -> None:
         self.query_one("#name", Input).focus()
@@ -413,11 +442,14 @@ class ProviderFormScreen(Screen[Provider | None]):
             self.query_one("#key", Input).value = provider.api_key
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "name":
+        self._advance_or_submit(event.input)
+
+    def _advance_or_submit(self, input_widget: Input | None) -> None:
+        if input_widget is not None and input_widget.id == "name":
             self.query_one("#url", Input).focus()
-        elif event.input.id == "url":
+        elif input_widget is not None and input_widget.id == "url":
             self.query_one("#key", Input).focus()
-        elif event.input.id == "key":
+        else:
             self._submit_form()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -485,7 +517,7 @@ class ProviderFormScreen(Screen[Provider | None]):
         self.dismiss(provider)
 
 
-class ModelPickerScreen(Screen[tuple[str, ...] | None]):
+class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...] | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
@@ -500,8 +532,9 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
     """
     BINDINGS = [
         ("space", "toggle", "Toggle model"),
-        ("enter", "apply", "Apply to Codex"),
-        ("escape", "cancel", "Back"),
+        Binding("enter", "save", "Save provider", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
 
     def __init__(self, models, provider_name: str):
@@ -516,7 +549,7 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
             yield Static("LOADING LIVE MODELS …", id="count")
             yield ListView(id="models")
             with Horizontal(id="actions"):
-                yield Button("Apply to Codex  ›", id="save", variant="primary")
+                yield Button("Save provider  ›", id="save", variant="primary")
                 yield Button("Back to main menu", id="back")
         yield Footer()
 
@@ -557,11 +590,11 @@ class ModelPickerScreen(Screen[tuple[str, ...] | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save" and self.selected:
-            self.action_apply()
+            self.action_save()
         elif event.button.id == "back":
             self.action_cancel()
 
-    def action_apply(self) -> None:
+    def action_save(self) -> None:
         if self.selected:
             self.dismiss(tuple(self.selected))
         else:
@@ -579,7 +612,7 @@ def run_provider_manager(
     return ProviderManagerApp(catalog_path, providers, target_path).run()
 
 
-class ApplyScreen(Screen[bool]):
+class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     #shell { width: 80%; height: auto; margin: 3 10; padding: 2 3; border: round #3b82f6; background: #131d38; }
@@ -588,12 +621,13 @@ class ApplyScreen(Screen[bool]):
     #cancel { background: #374151; }
     """
     BINDINGS = [
-        ("enter", "apply_profile", "Apply profile"),
-        ("escape", "cancel", "Back"),
+        Binding("enter", "activate", "Select", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
         ("up", "focus_previous_button", "Previous button"),
         ("down", "focus_next_button", "Next button"),
         ("left", "focus_previous_button", "Previous button"),
         ("right", "focus_next_button", "Next button"),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
 
     def __init__(self, provider: Provider, settings: CodexSettings, target_path):
@@ -637,6 +671,13 @@ class ApplyScreen(Screen[bool]):
 
     def action_apply_profile(self) -> None:
         self.dismiss(True)
+
+    def action_activate(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Button) and focused.id == "cancel":
+            self.action_cancel()
+        else:
+            self.action_apply_profile()
 
     def action_cancel(self) -> None:
         self.dismiss(False)
