@@ -15,7 +15,7 @@ from textual.widgets import Button, Footer, Header, Input, Label, ListItem, List
 from .model_client import ModelFetchError, fetch_models
 from .models import ModelDefinition, Provider
 from .errors import CatalogError, ConfigError, ValidationError
-from .provider_store import add_provider, delete_provider, update_provider
+from .provider_store import add_provider, delete_provider, set_provider_enabled, update_provider
 from .setup import normalize_base_url, provider_from_live_models
 from .tui import widget_id
 from .models import CodexSettings, mask_api_key
@@ -31,7 +31,7 @@ from .settings import (
 
 _HIDDEN_PROVIDER_MANAGER_BINDINGS = [
     Binding(key, "ignore_manager_shortcut", show=False)
-    for key in ("a", "e", "d", "q", "s")
+    for key in ("a", "e", "d", "q", "s", "space")
 ]
 
 
@@ -207,6 +207,7 @@ class ProviderManagerApp(App[Provider | None]):
         ("a", "add", "Add provider"),
         ("e", "edit", "Edit provider"),
         ("d", "remove", "Delete provider"),
+        ("space", "toggle_enabled", "Enable / disable"),
         ("q", "quit", "Quit"),
         ("s", "settings", "Settings"),
     ]
@@ -225,12 +226,13 @@ class ProviderManagerApp(App[Provider | None]):
         with Vertical(id="shell"):
             yield Static(
                 "CODEXIER  /  PROVIDER CATALOG\n"
-                "Manage OpenAI-compatible providers. Select one as the default, then sync every saved provider and model to Codex.",
+                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier default.",
                 id="brand",
             )
             yield ProviderListView(id="providers")
             with Horizontal(id="actions"):
-                yield Button("Set default & sync  ›", id="use", variant="primary")
+                yield Button("Set default & sync enabled  ›", id="use", variant="primary")
+                yield Button("Toggle enabled", id="toggle")
                 yield Button("＋ Add provider", id="add")
                 yield Button("✎ Edit provider", id="edit")
                 yield Button("× Delete provider", id="delete", variant="error")
@@ -256,7 +258,12 @@ class ProviderManagerApp(App[Provider | None]):
             self._update_selected_status(self.providers[0])
 
     def _provider_label(self, provider: Provider) -> Label:
-        marker = "● DEFAULT" if provider.id == self.applied_id else "○ AVAILABLE"
+        if provider.id == self.applied_id:
+            marker = "● DEFAULT"
+        elif provider.enabled:
+            marker = "● ENABLED"
+        else:
+            marker = "○ DISABLED"
         model_names = ", ".join(model.label for model in provider.models) or "no models selected"
         label = Label(
             f"{marker}  ◆  {provider.name}\n"
@@ -284,10 +291,13 @@ class ProviderManagerApp(App[Provider | None]):
             # being dismissed. Ignore transient events until status exists.
             return
         if provider is None:
-            status.update("Choose a provider to make it the default after sync.")
+            status.update("Toggle providers on, then choose an enabled provider as the default.")
+        elif not provider.enabled:
+            status.update(f"{provider.name} is disabled. Toggle it on before syncing.")
         else:
             status.update(
-                f"Default after sync: {provider.name} · {len(provider.models)} saved models"
+                f"Default after sync: {provider.name} · {len(provider.models)} models · "
+                f"{sum(item.enabled for item in self.providers)} providers enabled"
             )
 
     def action_add(self) -> None:
@@ -321,16 +331,49 @@ class ProviderManagerApp(App[Provider | None]):
         self.providers = tuple(item for item in self.providers if item.id != provider.id)
         self.run_worker(self._render_providers(), exclusive=True)
 
+    def action_toggle_enabled(self) -> None:
+        provider = self._selected()
+        if provider is None:
+            return
+        try:
+            updated = set_provider_enabled(
+                self.catalog_path, provider.id, not provider.enabled
+            )
+        except CatalogError as exc:
+            status = self.query_one("#status", Static)
+            status.update(str(exc))
+            status.add_class("error")
+            return
+        self.providers = tuple(
+            updated if item.id == updated.id else item for item in self.providers
+        )
+        self.run_worker(self._render_providers(), exclusive=True)
+        state = "enabled" if updated.enabled else "disabled"
+        self.query_one("#status", Static).update(
+            f"{updated.name} is {state}. Sync exports enabled providers only."
+        )
+
     def action_use(self) -> None:
         provider = self._selected()
-        if provider:
-            if self.target_path is None:
-                self.exit(provider)
-                return
-            self.push_screen(
-                ApplyScreen(provider, self.settings_for(provider), self.target_path),
-                self._apply_finished,
-            )
+        if provider is None:
+            return
+        if not provider.enabled:
+            status = self.query_one("#status", Static)
+            status.update(f"{provider.name} is disabled. Toggle it on before syncing.")
+            status.add_class("error")
+            return
+        if not any(item.enabled for item in self.providers):
+            status = self.query_one("#status", Static)
+            status.update("Enable at least one provider before syncing.")
+            status.add_class("error")
+            return
+        if self.target_path is None:
+            self.exit(provider)
+            return
+        self.push_screen(
+            ApplyScreen(provider, self.settings_for(provider), self.target_path),
+            self._apply_finished,
+        )
 
     def settings_for(self, provider: Provider) -> CodexSettings:
         return CodexSettings(
@@ -353,7 +396,14 @@ class ProviderManagerApp(App[Provider | None]):
         self._update_selected_status(self._selected())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        actions = {"add": self.action_add, "edit": self.action_edit, "delete": self.action_remove, "use": self.action_use, "back": self.action_quit}
+        actions = {
+            "add": self.action_add,
+            "edit": self.action_edit,
+            "delete": self.action_remove,
+            "toggle": self.action_toggle_enabled,
+            "use": self.action_use,
+            "back": self.action_quit,
+        }
         action = actions.get(event.button.id)
         if action:
             action()
@@ -369,7 +419,7 @@ class ProviderManagerApp(App[Provider | None]):
             self.providers += (provider,)
         self.run_worker(self._render_providers(), exclusive=True)
         self.query_one("#status", Static).update(
-            f"Saved {provider.name}. Select a default provider, then sync all saved providers."
+            f"Saved {provider.name}. Toggle it on when you want to sync it."
         )
 
 
@@ -722,6 +772,7 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
             base.api_key,
             tuple(ModelDefinition(model.id, model.label) for model in models if model.id in selected),
             {},
+            self.existing_provider.enabled if self.existing_provider else False,
         )
         try:
             if self.existing_provider:

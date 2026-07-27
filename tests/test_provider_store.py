@@ -6,7 +6,15 @@ import pytest
 
 from codexier.errors import CatalogError
 from codexier.models import ModelDefinition, Provider
-from codexier.provider_store import ProviderStore, add_provider, create_provider_catalog, delete_provider, resolve_provider_path, update_provider
+from codexier.provider_store import (
+    ProviderStore,
+    add_provider,
+    create_provider_catalog,
+    delete_provider,
+    resolve_provider_path,
+    set_provider_enabled,
+    update_provider,
+)
 
 
 def test_load_catalog(tmp_path: Path):
@@ -21,6 +29,7 @@ def test_load_catalog(tmp_path: Path):
     path.write_text(json.dumps(source))
     providers = ProviderStore(path).load()
     assert providers[0].models[0].label == "one"
+    assert providers[0].enabled is False
 
 
 def test_missing_catalog_fails(tmp_path: Path):
@@ -73,6 +82,25 @@ def test_update_provider_replaces_existing_entry(tmp_path: Path):
     loaded = ProviderStore(path).get("demo")
     assert loaded.name == "Demo 2"
     assert loaded.api_key == "new"
+
+
+def test_set_provider_enabled_persists_home_screen_toggle(tmp_path: Path):
+    path = tmp_path / "providers.json"
+    add_provider(
+        path,
+        Provider(
+            "demo",
+            "Demo",
+            "https://demo.example/v1",
+            "key",
+            (ModelDefinition("a", "A"),),
+            {},
+            enabled=False,
+        ),
+    )
+    enabled = set_provider_enabled(path, "demo", True)
+    assert enabled.enabled is True
+    assert json.loads(path.read_text())["providers"][0]["enabled"] is True
 
 
 def test_delete_provider_removes_entry(tmp_path: Path):

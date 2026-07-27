@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .config_manager import detect_config_target, load_target
-from .codex_profile import apply_codex_profiles, launch_command, provider_profile_id
+from .codex_profile import apply_codex_profiles, launch_command
 from .errors import CodexierError
 from .models import CodexSettings
 from .process_manager import (
@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--print-command", action="store_true",
                         help="Print the selected default provider's Codex CLI command after syncing.")
     parser.add_argument("--patch-desktop", action="store_true",
-                        help="Install the supported macOS desktop provider-picker patch.")
+                        help="Install the supported desktop provider-picker patch.")
     parser.add_argument("--restore-desktop-patch", type=Path, metavar="BACKUP",
                         help="Restore a desktop patch backup and exit.")
     return parser
@@ -87,7 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"Codex profile installed: {result.config_path}")
                 print(f"Model catalog installed: {result.catalog_path}")
                 if args.print_command or sys.platform.startswith("linux"):
-                    print("Run: " + " ".join(launch_command(provider_profile_id(provider))))
+                    print("Run: " + " ".join(launch_command()))
                 if args.patch_desktop:
                     desktop_target = default_target()
                     backup_root = Path.home() / ".codex" / "codexier-desktop-backups"

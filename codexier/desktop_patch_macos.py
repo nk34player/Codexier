@@ -29,13 +29,16 @@ import time
 from typing import Any, NoReturn
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV3"
-LEGACY_PATCH_MARKER = b"__codexDesktopModelProvidersPatchV2"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV4"
+LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV2",
+    b"__codexDesktopModelProvidersPatchV3",
+)
 ASAR_PACKAGE = "@electron/asar@3.2.10"
 PRETTIER_PACKAGE = "prettier@3.6.2"
 
 DEFAULT_PROVIDER_CONFIG: dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     "default_provider": "openai",
     "providers": [
         {
@@ -44,20 +47,9 @@ DEFAULT_PROVIDER_CONFIG: dict[str, Any] = {
             "description": (
                 "Built-in provider; uses your signed-in ChatGPT account"
             ),
-        },
-        {
-            "id": "openrouter",
-            "label": "OpenRouter",
-            "description": (
-                "Custom provider; uses [model_providers.openrouter] from config.toml"
-            ),
-        },
+            "models": [],
+        }
     ],
-    "model_providers": {
-        "moonshotai/kimi-k3": "openrouter",
-        "x-ai/grok-4.5": "openrouter",
-        "anthropic/claude-fable-5": "openrouter",
-    },
 }
 
 
@@ -891,19 +883,260 @@ PICKER_DIFF_LEGACY_V2_TO_V3 = r"""@@ -10242,7 +10242,7 @@
 """
 
 
+# Provider-first V4 patch helpers.
+def _append_insertion_diff(
+    diff: str, context: str, inserted: str
+) -> str:
+    """Append a source-validated insertion hunk without hand-prefixing lines."""
+    return (
+        diff
+        + "@@ provider-first insertion @@\n"
+        + "".join(f"+{line}\n" for line in inserted.splitlines())
+        + "".join(f" {line}\n" for line in context.splitlines())
+    )
+
+
+def _insert_into_existing_hunk(
+    diff: str, context: str, inserted: str
+) -> str:
+    """Insert lines before a context block already present in an embedded hunk."""
+    needle = "".join(f" {line}\n" for line in context.splitlines())
+    replacement = "".join(f"+{line}\n" for line in inserted.splitlines()) + needle
+    if diff.count(needle) != 1:
+        raise RuntimeError("Embedded patch context is not unique")
+    return diff.replace(needle, replacement)
+
+
+def _insert_hunk_before(diff: str, anchor: str, hunk: str) -> str:
+    if diff.count(anchor) != 1:
+        raise RuntimeError("Embedded patch hunk anchor is not unique")
+    return diff.replace(anchor, hunk + anchor)
+
+
+CENTRAL_V4_JAVASCRIPT = r"""function codexProviderRoutingFallbackV4() {
+  return {
+    version: 2,
+    defaultProvider: `openai`,
+    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
+  };
+}
+function codexNormalizeProviderRoutingConfigV4(e) {
+  if (e == null || typeof e !== `object` || Array.isArray(e))
+    throw Error(`Expected a JSON object`);
+  if (e.version !== 2 || !Array.isArray(e.providers) || e.providers.length === 0)
+    throw Error(`Expected provider-routing config version 2`);
+  let t = [], n = new Set();
+  for (let r of e.providers) {
+    if (r == null || typeof r !== `object` || Array.isArray(r))
+      throw Error(`Every provider must be an object`);
+    let e = typeof r.id === `string` ? r.id.trim() : ``;
+    if (e.length === 0 || n.has(e) || !Array.isArray(r.models))
+      throw Error(`Providers must have unique ids and model arrays`);
+    n.add(e);
+    let i = new Set(), a = [];
+    for (let t of r.models) {
+      let n = typeof t?.id === `string` ? t.id.trim() : ``,
+        r = typeof t?.label === `string` ? t.label.trim() : ``;
+      if (n.length === 0 || r.length === 0 || i.has(n))
+        throw Error(`Provider models must have unique ids and labels`);
+      (i.add(n), a.push({ id: n, label: r }));
+    }
+    t.push({
+      id: e,
+      label: typeof r.label === `string` && r.label.trim().length > 0 ? r.label.trim() : e,
+      description: typeof r.description === `string` ? r.description.trim() : ``,
+      models: a,
+    });
+  }
+  let r = typeof e.default_provider === `string` ? e.default_provider.trim() : ``;
+  if (!n.has(r)) throw Error(`default_provider must reference a configured provider`);
+  return { version: 2, defaultProvider: r, providers: t };
+}
+function codexProviderRoutingStateV4() {
+  return (window.__codexDesktopModelProvidersPatchV4 ??= {
+    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
+}
+async function codexLoadProviderRoutingConfigV4(e = !1) {
+  let t = codexProviderRoutingStateV4();
+  if (!e && t.loaded) return t.config;
+  if (t.promise != null) return t.promise;
+  return (t.promise = (async () => {
+    try {
+      let { codexHome: e } = await tp(`codex-home`, { params: { hostId: `local` } }),
+        n = e.includes(`\\`) && !e.includes(`/`) ? `\\` : `/`,
+        r = `${e.replace(/[\\/]+$/u, ``)}${n}desktop-model-providers.json`,
+        { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
+        a = codexNormalizeProviderRoutingConfigV4(JSON.parse(i));
+      return ((t.config = a), (t.error = null), (t.loaded = !0), a);
+    } catch (e) {
+      return ((t.config = codexProviderRoutingFallbackV4()), (t.error = e instanceof Error ? e.message : String(e)), (t.loaded = !0), t.config);
+    } finally {
+      t.promise = null;
+    }
+  })(), t.promise);
+}
+async function codexPatchAppServerParams(e, t) {
+  if (e === `thread/list`) {
+    let e = t != null && typeof t === `object` ? t : {};
+    return e.modelProviders == null ? { ...e, modelProviders: [] } : e;
+  }
+  if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
+  let n = await codexLoadProviderRoutingConfigV4(!0), r;
+  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
+  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
+  if (i == null) return t;
+  if (i.id !== `openai` && !i.models.some((e) => e.id === t.model))
+    throw Error(`The selected model is not configured for the selected provider`);
+  return { ...t, modelProvider: i.id };
+}"""
+
+PICKER_V4_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
+  return {
+    version: 2,
+    defaultProvider: `openai`,
+    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
+  };
+}
+function codexPickerNormalizeProviderRoutingConfigV4(e) {
+  if (e == null || typeof e !== `object` || Array.isArray(e))
+    throw Error(`Expected a JSON object`);
+  if (e.version !== 2 || !Array.isArray(e.providers) || e.providers.length === 0)
+    throw Error(`Expected provider-routing config version 2`);
+  let t = [], n = new Set();
+  for (let r of e.providers) {
+    let e = typeof r?.id === `string` ? r.id.trim() : ``;
+    if (e.length === 0 || n.has(e) || !Array.isArray(r?.models))
+      throw Error(`Providers must have unique ids and model arrays`);
+    n.add(e);
+    let i = new Set(), a = [];
+    for (let t of r.models) {
+      let n = typeof t?.id === `string` ? t.id.trim() : ``,
+        r = typeof t?.label === `string` ? t.label.trim() : ``;
+      if (n.length === 0 || r.length === 0 || i.has(n))
+        throw Error(`Provider models must have unique ids and labels`);
+      (i.add(n), a.push({ id: n, label: r }));
+    }
+    t.push({
+      id: e,
+      label: typeof r.label === `string` && r.label.trim().length > 0 ? r.label.trim() : e,
+      description: typeof r.description === `string` ? r.description.trim() : ``,
+      models: a,
+    });
+  }
+  let r = typeof e.default_provider === `string` ? e.default_provider.trim() : ``;
+  if (!n.has(r)) throw Error(`default_provider must reference a configured provider`);
+  return { version: 2, defaultProvider: r, providers: t };
+}
+function codexPickerProviderRoutingStateV4() {
+  return (window.__codexDesktopModelProvidersPatchV4 ??= {
+    config: codexPickerProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
+}
+async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
+  let t = codexPickerProviderRoutingStateV4();
+  if (!e && t.loaded) return t.config;
+  if (t.promise != null) return t.promise;
+  return (t.promise = (async () => {
+    try {
+      let { codexHome: e } = await tp(`codex-home`, { params: { hostId: `local` } }),
+        n = e.includes(`\\`) && !e.includes(`/`) ? `\\` : `/`,
+        r = `${e.replace(/[\\/]+$/u, ``)}${n}desktop-model-providers.json`,
+        { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
+        a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
+      return ((t.config = a), (t.error = null), (t.loaded = !0), a);
+    } catch (e) {
+      return ((t.config = codexPickerProviderRoutingFallbackV4()), (t.error = e instanceof Error ? e.message : String(e)), (t.loaded = !0), t.config);
+    } finally {
+      t.promise = null;
+    }
+  })(), t.promise);
+}
+function codexReadProviderChoiceV4(e) {
+  try {
+    let t = window.localStorage.getItem(`codex.customProviderSelection.v2`);
+    if (e.providers.some((e) => e.id === t)) return t;
+  } catch {}
+  return e.defaultProvider;
+}
+function codexWriteProviderChoiceV4(e) {
+  try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
+}
+function codexUseProviderModels(e) {
+  let r = codexPickerProviderRoutingStateV4(),
+    [t, n] = CodexProviderPatchReact.useState(r.config),
+    [i, a] = CodexProviderPatchReact.useState(() => codexReadProviderChoiceV4(r.config));
+  CodexProviderPatchReact.useEffect(() => {
+    let e = !0;
+    return (codexPickerLoadProviderRoutingConfigV4(!0).then((t) => {
+      e && (n(t), a(codexReadProviderChoiceV4(t)));
+    }), () => { e = !1; });
+  }, []);
+  let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
+  if (o == null) return e;
+  if (o.id === `openai`) {
+    let t = new Set(r.config.providers.flatMap((e) => e.id === `openai` ? [] : e.models.map((e) => e.id)));
+    return e?.filter((e) => !t.has(e.model));
+  }
+  return o.models.flatMap((t) => {
+    let n = e?.find((e) => e.model === t.id);
+    return n == null ? [] : [{ ...n, displayName: `${t.label} (${o.label})` }];
+  });
+}
+function CodexCustomProviderPickerSection() {
+  let r = codexPickerProviderRoutingStateV4(),
+    [e, t] = CodexProviderPatchReact.useState(r.config),
+    [n, i] = CodexProviderPatchReact.useState(() => codexReadProviderChoiceV4(r.config));
+  CodexProviderPatchReact.useEffect(() => {
+    codexPickerLoadProviderRoutingConfigV4(!0).then((r) => {
+      (t(r), i(codexReadProviderChoiceV4(r)));
+    });
+  }, []);
+  return (0, wQ.jsxs)(wQ.Fragment, {
+    children: [
+      (0, wQ.jsx)(yz.Title, { children: `Provider` }),
+      e.providers.map((e) => (0, wQ.jsx)(yz.Item, {
+        RightIcon: n === e.id ? Ym : void 0,
+        SubText: (0, wQ.jsx)(`span`, {
+          className: `text-token-description-foreground`,
+          children: e.description || `Choose this provider, then choose one of its models`,
+        }),
+        onSelect: (r) => {
+          (r?.preventDefault(), codexWriteProviderChoiceV4(e.id), i(e.id));
+        },
+        children: e.label,
+      }, e.id)),
+      (0, wQ.jsx)(yz.Separator, {}),
+    ],
+  });
+}"""
+
+# These are deliberately generated rather than hand-written unified-diff
+# lines.  It prevents an accidental missing `+` from creating an invalid
+# embedded patch while retaining exact source-hunk matching.
+CENTRAL_DIFF_26721_V4 = _insert_into_existing_hunk(
+    CENTRAL_DIFF_26721,
+    "var s9t,\n  c9t,",
+    CENTRAL_V4_JAVASCRIPT,
+)
+PICKER_DIFF_26721_V4 = _insert_into_existing_hunk(
+    PICKER_DIFF_26721,
+    "function CMs(e) {",
+    PICKER_V4_JAVASCRIPT,
+)
+PICKER_DIFF_26721_V4 = _insert_hunk_before(
+    PICKER_DIFF_26721_V4,
+    "@@ -549693,6 +549895,7 @@\n",
+    _append_insertion_diff(
+        "",
+        "      triggerButton: N,\n    } = e,\n    P = m === void 0 ? !1 : m,",
+        "    p = codexUseProviderModels(p),",
+    ),
+)
+
+
 PATCH_VARIANTS: tuple[tuple[str, str, str], ...] = (
-    ("ChatGPT 26.721 Power Picker", CENTRAL_DIFF_26721, PICKER_DIFF_26721),
-    ("ChatGPT 26.715 legacy picker", CENTRAL_DIFF, PICKER_DIFF),
-    (
-        "ChatGPT 26.721 provider-picker V2 upgrade",
-        CENTRAL_DIFF_V2_TO_V3,
-        PICKER_DIFF_26721_V2_TO_V3,
-    ),
-    (
-        "ChatGPT 26.715 provider-picker V2 marker upgrade",
-        CENTRAL_DIFF_V2_TO_V3,
-        PICKER_DIFF_LEGACY_V2_TO_V3,
-    ),
+    ("ChatGPT 26.721 provider-first picker", CENTRAL_DIFF_26721_V4, PICKER_DIFF_26721_V4),
 )
 
 
@@ -1049,19 +1282,15 @@ def print_completion_summary(
         )
 
     terminal_heading("Custom provider config")
-    terminal_status("CONFIG", "Edit this file to customize provider routing:", "36", detail=config)
-    terminal_bullet("providers", "Providers displayed in the app menu.")
+    terminal_status("CONFIG", "Codexier manages this provider/model config:", "36", detail=config)
+    terminal_bullet("providers", "Enabled providers displayed in the app menu.")
     terminal_bullet(
-        "model_providers",
-        "Maps each exact model slug to the provider used by Automatic mode.",
-    )
-    terminal_bullet(
-        "default_provider",
-        "Provider used by Automatic mode when a model has no explicit mapping.",
+        "providers[].models",
+        "Models shown only after their provider is selected.",
     )
     terminal_status(
         "LINK",
-        "Custom provider IDs must match a [model_providers.<id>] section.",
+        "Each custom provider ID maps to Codexier's internal route in config.toml.",
         "35",
         detail=codex_config,
     )
@@ -1075,7 +1304,7 @@ def print_completion_summary(
     terminal_heading("After editing", "35")
     terminal_status(
         "RELOAD",
-        "Save valid JSON, then close and reopen the model/provider menu.",
+        "Use Codexier to sync changes, then close and reopen the model/provider menu.",
         "35",
         detail="No repatching or app restart is needed.",
     )
@@ -1238,8 +1467,8 @@ def parse_args() -> argparse.Namespace:
 def validate_provider_config(data: Any) -> None:
     if not isinstance(data, dict):
         raise PatchError("Provider config must be a JSON object")
-    if data.get("version") != 1:
-        raise PatchError("Provider config version must be 1")
+    if data.get("version") != 2:
+        raise PatchError("Provider config version must be 2")
     providers = data.get("providers")
     if not isinstance(providers, list) or not providers:
         raise PatchError("Provider config 'providers' must be a non-empty array")
@@ -1261,22 +1490,36 @@ def validate_provider_config(data: Any) -> None:
         description = provider.get("description", "")
         if not isinstance(description, str):
             raise PatchError(f"Provider '{provider_id}' description must be a string")
+        models = provider.get("models")
+        if not isinstance(models, list):
+            raise PatchError(f"Provider '{provider_id}' models must be an array")
+        model_ids: set[str] = set()
+        for model in models:
+            if not isinstance(model, dict):
+                raise PatchError(
+                    f"Every model for provider '{provider_id}' must be an object"
+                )
+            model_id = model.get("id")
+            if not isinstance(model_id, str) or not model_id.strip():
+                raise PatchError(
+                    f"Every model for provider '{provider_id}' needs a non-empty id"
+                )
+            model_id = model_id.strip()
+            if model_id in model_ids:
+                raise PatchError(
+                    f"Provider '{provider_id}' has a duplicate model id: {model_id}"
+                )
+            model_ids.add(model_id)
+            label = model.get("label")
+            if not isinstance(label, str) or not label.strip():
+                raise PatchError(
+                    f"Model '{model_id}' for provider '{provider_id}' "
+                    "needs a non-empty label"
+                )
 
     default_provider = data.get("default_provider")
     if default_provider not in provider_ids:
         raise PatchError("default_provider must reference a configured provider")
-
-    mappings = data.get("model_providers")
-    if not isinstance(mappings, dict):
-        raise PatchError("model_providers must be an object")
-    for model, provider_id in mappings.items():
-        if not isinstance(model, str) or not model.strip():
-            raise PatchError("Every model mapping key must be a non-empty string")
-        if provider_id not in provider_ids:
-            raise PatchError(
-                f"Model '{model}' references unknown provider '{provider_id}'"
-            )
-
 
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1351,6 +1594,10 @@ def contains_marker(path: Path, marker: bytes = PATCH_MARKER) -> bool:
                 return True
             previous = data[-overlap:] if overlap else b""
     return False
+
+
+def contains_legacy_marker(path: Path) -> bool:
+    return any(contains_marker(path, marker) for marker in LEGACY_PATCH_MARKERS)
 
 
 def load_plist(path: Path) -> tuple[dict[str, Any], plistlib.PlistFormat]:
@@ -1683,7 +1930,7 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
         print_completion_summary(config, already_installed=True)
         return
 
-    is_upgrade = contains_marker(asar_path, LEGACY_PATCH_MARKER)
+    is_upgrade = contains_legacy_marker(asar_path)
     if is_upgrade:
         terminal_status(
             "UPGRADE",
@@ -1780,8 +2027,6 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
 
         if not contains_marker(patched_asar):
             raise PatchError("Packed ASAR does not contain the patch marker")
-        if contains_marker(patched_asar, LEGACY_PATCH_MARKER):
-            raise PatchError("Packed ASAR still contains the legacy patch marker")
         patched_header_hash = asar_header_hash(patched_asar)
         info["ElectronAsarIntegrity"]["Resources/app.asar"]["hash"] = patched_header_hash
         with patched_plist.open("wb") as handle:
@@ -1816,8 +2061,6 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
                 raise PatchError("Installed ASAR integrity verification failed")
             if not contains_marker(asar_path):
                 raise PatchError("Installed ASAR is missing the patch marker")
-            if contains_marker(asar_path, LEGACY_PATCH_MARKER):
-                raise PatchError("Installed ASAR still contains the legacy patch marker")
         except Exception as exc:
             if live_mutation_started:
                 terminal_status(

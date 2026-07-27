@@ -1,8 +1,9 @@
 """Desktop-patch entry points.
 
-The macOS implementation is vendored from the user-selected, source-validated
-patch project. Windows Store packages are signed MSIX payloads and deliberately
-fail closed until a verified Windows-specific source layout exists.
+The macOS implementation is source-validated. Windows discovery, backup, and
+restore work with native paths, while mutation deliberately fails closed until
+a verified Windows Electron adapter exists. Microsoft Store/MSIX packages are
+never modified because their signatures cover the package payload.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ class DesktopPatchTarget:
     platform: str
     archive_path: Path
     metadata_path: Path | None = None
+    package_type: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -42,17 +44,77 @@ def default_target(platform: str | None = None) -> DesktopPatchTarget:
         resources = Path("/Applications/ChatGPT.app/Contents/Resources")
         return DesktopPatchTarget("darwin", resources / "app.asar")
     if system == "windows":
-        package_root = _windows_package_root()
-        resources = package_root / "app" / "resources"
-        return DesktopPatchTarget(
-            "windows", resources / "app.asar", resources / "owl-electron-app.json"
-        )
+        return _windows_default_target()
     raise ConfigError("Desktop patching is supported only on Windows and macOS.")
+
+
+def _windows_default_target() -> DesktopPatchTarget:
+    override = os.environ.get("CODEXIER_WINDOWS_APP_ASAR")
+    if override:
+        archive = Path(override).expanduser()
+        return DesktopPatchTarget(
+            "windows",
+            archive,
+            _windows_metadata_path(archive),
+            "unpackaged",
+        )
+    for archive in _windows_unpacked_archives():
+        if archive.is_file():
+            return DesktopPatchTarget(
+                "windows",
+                archive,
+                _windows_metadata_path(archive),
+                "unpackaged",
+            )
+    package_root = _windows_package_root()
+    resources = package_root / "app" / "resources"
+    archive = resources / "app.asar"
+    return DesktopPatchTarget(
+        "windows",
+        archive,
+        _windows_metadata_path(archive),
+        "msix",
+    )
+
+
+def _windows_unpacked_archives() -> tuple[Path, ...]:
+    """Return common unpackaged Electron install paths without shell commands."""
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", r"C:\Users\Default\AppData\Local"))
+    program_files = Path(os.environ.get("ProgramW6432", r"C:\Program Files"))
+    roots = (
+        local_app_data / "Programs" / "ChatGPT",
+        local_app_data / "Programs" / "Codex",
+        local_app_data / "ChatGPT",
+        local_app_data / "Codex",
+        program_files / "ChatGPT",
+        program_files / "Codex",
+    )
+    return tuple(
+        archive
+        for root in roots
+        for archive in (root / "resources" / "app.asar", root / "app" / "resources" / "app.asar")
+    )
+
+
+def _windows_metadata_path(archive: Path) -> Path | None:
+    for candidate in (
+        archive.parent / "owl-electron-app.json",
+        archive.parent.parent / "owl-electron-app.json",
+    ):
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _windows_package_root() -> Path:
     packages = Path(os.environ.get("ProgramW6432", r"C:\Program Files")) / "WindowsApps"
-    matches = sorted(packages.glob("OpenAI.Codex_*"))
+    matches = sorted(
+        (
+            *packages.glob("OpenAI.Codex_*"),
+            *packages.glob("OpenAI.ChatGPT_*"),
+        ),
+        key=lambda path: path.name,
+    )
     if matches:
         return matches[-1]
     # The Store package is normally protected; use this only as a clear
@@ -69,8 +131,20 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
         return DesktopPatchStatus(target, True, True, "Codexier desktop patch is installed.")
     if target.platform == "darwin":
         return DesktopPatchStatus(target, False, True, "macOS app is ready for source validation.")
+    if target.package_type == "msix":
+        return DesktopPatchStatus(
+            target,
+            False,
+            False,
+            "Microsoft Store/MSIX package detected. Codexier will not modify "
+            "signed package files.",
+        )
     return DesktopPatchStatus(
-        target, False, False, "Unsupported desktop app version; no changes were made."
+        target,
+        False,
+        False,
+        "Windows target detected, but no verified Windows patch adapter is "
+        "available; no changes were made.",
     )
 
 
@@ -109,10 +183,15 @@ def apply_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Deskto
             raise ConfigError(str(exc)) from exc
         return patch_status(target)
     if target.platform == "windows":
+        if target.package_type == "msix":
+            raise ConfigError(
+                "Windows Microsoft Store/MSIX packages are signed. Codexier "
+                "refuses to modify app.asar; use an unpackaged install when a "
+                "verified Windows patch adapter is available."
+            )
         raise ConfigError(
-            "Windows Microsoft Store packages are MSIX-signed. Refusing to modify "
-            "app.asar until a verified Windows patch layout and package-integrity "
-            "recovery path exist."
+            "A Windows Electron target was found, but Codexier has no verified "
+            "Windows source layout/patch adapter yet. No files were changed."
         )
     if not status.supported:
         raise ConfigError(status.message)

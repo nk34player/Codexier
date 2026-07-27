@@ -20,6 +20,7 @@ class Provider:
     api_key: str
     models: tuple[ModelDefinition, ...]
     presets: Mapping[str, tuple[str, ...]]
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ def validate_provider(provider: Provider) -> None:
     validate_base_url(provider.base_url)
     if not provider.api_key.strip():
         raise ValidationError(f"Provider {provider.name!r} has an empty API key.")
+    if not isinstance(provider.enabled, bool):
+        raise ValidationError(f"Provider {provider.name!r} has an invalid enabled state.")
     ids = [model.id for model in provider.models]
     if any(not model_id.strip() for model_id in ids) or len(ids) != len(set(ids)):
         raise ValidationError(f"Provider {provider.name!r} has invalid model IDs.")

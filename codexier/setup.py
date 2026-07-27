@@ -38,10 +38,17 @@ def provider_from_form(name: str, base_url: str, api_key: str, model_ids: Sequen
         raise ValidationError("At least one model is required.")
     provider_id = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
     models = tuple(ModelDefinition(model_id, model_id) for model_id in model_ids)
-    return Provider(provider_id, name.strip(), base_url.strip(), api_key, models, {})
+    return Provider(provider_id, name.strip(), base_url.strip(), api_key, models, {}, False)
 
 
 def provider_from_live_models(name: str, base_url: str, api_key: str, models: Sequence[LiveModel]) -> Provider:
     provider = provider_from_form(name, base_url, api_key, [model.id for model in models])
-    return Provider(provider.id, provider.name, provider.base_url, provider.api_key,
-                    tuple(ModelDefinition(model.id, model.label) for model in models), {})
+    return Provider(
+        provider.id,
+        provider.name,
+        provider.base_url,
+        provider.api_key,
+        tuple(ModelDefinition(model.id, model.label) for model in models),
+        {},
+        False,
+    )

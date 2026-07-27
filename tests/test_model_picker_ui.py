@@ -90,6 +90,7 @@ def test_each_page_exposes_only_its_relevant_footer_actions(tmp_path):
                 "add",
                 "edit",
                 "remove",
+                "toggle_enabled",
                 "select_cursor",
                 "quit",
                 "settings",

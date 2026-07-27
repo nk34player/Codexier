@@ -127,7 +127,7 @@ def test_profile_launch_command_is_explicit():
     assert launch_command() == ["codex", "--profile", "codexier"]
 
 
-def test_apply_all_profiles_writes_all_providers_and_one_catalog(tmp_path: Path):
+def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: Path):
     other = Provider(
         "other", "Other", "https://other.example/v1", "other-secret",
         (ModelDefinition("other/model", "Other Model"),), {},
@@ -136,21 +136,63 @@ def test_apply_all_profiles_writes_all_providers_and_one_catalog(tmp_path: Path)
     config = tomllib.loads(result.config_path.read_text())
     catalog = json.loads(result.catalog_path.read_text())
     assert provider_profile_id(other) == "codexier-other"
-    assert config["model_provider"] == "codexier-other"
-    assert set(config["model_providers"]) >= {"codexier-demo", "codexier-other"}
+    assert config["model_provider"] == "codexier"
+    assert config["codexier_provider_id"] == "other"
+    assert set(config["model_providers"]) >= {
+        "codexier",
+        "codexier-demo",
+        "codexier-other",
+    }
+    assert set(config["profiles"]) == {"codexier"}
     assert [model["slug"] for model in catalog["models"]] == [
         "gpt-5.2", "claude/opus 4.8", "other/model"
     ]
     desktop = json.loads(result.desktop_config_path.read_text())
-    assert desktop["model_providers"]["other/model"] == "codexier-other"
+    assert desktop["version"] == 2
+    assert desktop["default_provider"] == "codexier-other"
+    assert desktop["providers"][2]["models"] == [
+        {"id": "other/model", "label": "Other Model"}
+    ]
 
 
-def test_duplicate_model_ids_are_rejected_before_apply(tmp_path: Path):
+def test_duplicate_model_ids_are_disambiguated_by_provider_in_desktop_config(tmp_path: Path):
     duplicate = Provider(
         "other", "Other", "https://other.example/v1", "secret",
         (ModelDefinition("gpt-5.2", "Different label"),), {},
     )
-    with pytest.raises(ConfigError, match="gpt-5.2"):
-        ensure_unique_model_ids((provider(), duplicate))
-    with pytest.raises(ConfigError, match="gpt-5.2"):
-        apply_codex_profiles((provider(), duplicate), provider(), tmp_path / ".codex")
+    ensure_unique_model_ids((provider(), duplicate))
+    result = apply_codex_profiles((provider(), duplicate), provider(), tmp_path / ".codex")
+    desktop = json.loads(result.desktop_config_path.read_text())
+    assert desktop["providers"][1]["models"][0]["id"] == "gpt-5.2"
+    assert desktop["providers"][2]["models"] == [
+        {"id": "gpt-5.2", "label": "Different label"}
+    ]
+
+
+def test_apply_skips_disabled_providers_and_removes_stale_codexier_entries(
+    tmp_path: Path,
+):
+    disabled = Provider(
+        "off",
+        "Off",
+        "https://off.example/v1",
+        "off-secret",
+        (ModelDefinition("off-model", "Off model"),),
+        {},
+        enabled=False,
+    )
+    home = tmp_path / ".codex"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        '[model_providers.codexier-old]\nname = "old"\n'
+        '[profiles.codexier-old]\nmodel = "old"\n'
+        '[model_providers.unrelated]\nname = "keep"\n'
+    )
+    result = apply_codex_profiles((provider(), disabled), provider(), home)
+    config = tomllib.loads(result.config_path.read_text())
+    desktop = json.loads(result.desktop_config_path.read_text())
+    assert "codexier-off" not in config["model_providers"]
+    assert "codexier-old" not in config["model_providers"]
+    assert "codexier-old" not in config["profiles"]
+    assert config["model_providers"]["unrelated"]["name"] == "keep"
+    assert [item["id"] for item in desktop["providers"]] == ["openai", "codexier-demo"]

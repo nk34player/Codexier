@@ -46,6 +46,7 @@ def add_provider(path: Path, provider: Provider) -> None:
         "api_key": provider.api_key,
         "models": [{"id": model.id, "label": model.label} for model in provider.models],
         "presets": {"default": [model.id for model in provider.models]},
+        "enabled": provider.enabled,
     })
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
     path.chmod(0o600)
@@ -80,6 +81,7 @@ def update_provider(path: Path, provider: Provider) -> None:
                 "api_key": provider.api_key,
                 "models": [{"id": model.id, "label": model.label} for model in provider.models],
                 "presets": {"default": [model.id for model in provider.models]},
+                "enabled": provider.enabled,
             }
             _write_catalog(path, raw)
             return
@@ -144,7 +146,21 @@ class ProviderStore:
             api_key=str(item["api_key"]),
             models=models,
             presets=presets,
+            # Providers created before opt-in synchronization are deliberately
+            # inactive until the user toggles them on from the home screen.
+            enabled=item.get("enabled", False),
         )
+
+
+def set_provider_enabled(path: Path, provider_id: str, enabled: bool) -> Provider:
+    """Persist the home-screen opt-in state for one provider."""
+    raw = _read_catalog(path)
+    for item in raw["providers"]:
+        if item.get("id") == provider_id:
+            item["enabled"] = enabled
+            _write_catalog(path, raw)
+            return ProviderStore(path).get(provider_id)
+    raise CatalogError(f"Unknown provider: {provider_id}")
 
 
 def secure_catalog(path: Path) -> None:
