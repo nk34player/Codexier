@@ -252,23 +252,14 @@ def build_desktop_provider_config(
         "default_provider": provider_route_id(selected_provider),
         "providers": [
             {
-                "id": "openai",
-                "label": "ChatGPT / OpenAI",
-                "description": "Built-in provider; uses your signed-in ChatGPT account",
-                "models": [],
-            },
-            *[
-                {
-                    "id": provider_route_id(provider),
-                    "label": provider.name,
-                    "description": f"Uses {provider.name} from Codexier",
-                    "models": [
-                        {"id": model.id, "label": model.label}
-                        for model in provider.models
-                    ],
-                }
-                for provider in providers
-            ],
+                "id": provider_route_id(provider),
+                "label": provider.name,
+                "models": [
+                    {"id": model.id, "label": model.label}
+                    for model in provider.models
+                ],
+            }
+            for provider in providers
         ],
     }
 

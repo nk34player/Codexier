@@ -17,15 +17,20 @@ def test_chatgpt_detection_filters_to_current_user(monkeypatch):
     output = json.dumps(
         [
             {"Id": 10, "Path": r"C:\Apps\ChatGPT.exe", "UserName": r"PC\me"},
+            {"Id": 12, "Path": r"C:\Apps\Codex.exe", "UserName": r"PC\me"},
             {"Id": 11, "Path": r"C:\Apps\ChatGPT.exe", "UserName": r"PC\other"},
+            {"Id": 13, "Path": r"C:\Apps\Other.exe", "UserName": r"PC\me"},
         ]
     )
 
     def run(*args, **kwargs):
+        command = args[0][-1]
+        assert "'ChatGPT','Codex'" in command
         return subprocess.CompletedProcess(args[0], 0, output, "")
 
     assert detect_chatgpt_processes(platform="win32", run=run) == (
         ChatGPTProcess(10, r"C:\Apps\ChatGPT.exe", r"PC\me"),
+        ChatGPTProcess(12, r"C:\Apps\Codex.exe", r"PC\me"),
     )
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 import time
 
 from textual import events, on
@@ -10,16 +12,33 @@ from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import Screen
 from textual.css.query import NoMatches
-from textual.widgets import Button, Footer, Header, Input, Label, ListItem, ListView, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
+from .backup import atomic_write
 from .model_client import ModelFetchError, fetch_models
 from .models import ModelDefinition, Provider
+from .desktop_patch_macos import PatchError
 from .errors import CatalogError, ConfigError, ValidationError
 from .provider_store import add_provider, delete_provider, set_provider_enabled, update_provider
 from .setup import normalize_base_url, provider_from_live_models
 from .tui import widget_id
 from .models import CodexSettings, mask_api_key
-from .codex_profile import applied_provider_id
+from .codex_profile import (
+    applied_provider_id,
+    build_desktop_provider_config,
+)
 from .settings import (
     DEFAULT_AUTO_COMPACT_TOKEN_LIMIT,
     DEFAULT_CONTEXT_WINDOW,
@@ -233,13 +252,19 @@ class ProviderManagerApp(App[Provider | None]):
         )
         self.migration_message = migration_message
         self.result: Provider | None = None
+        self.app_settings = load_settings(catalog_path)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="shell"):
             yield Static(
                 "CODEXIER  /  PROVIDER CATALOG\n"
-                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier fallback.",
+                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier fallback."
+                + (
+                    f"\nWindows mode: {self.app_settings['windows']['mode'].title()} Codex App"
+                    if sys.platform == "win32"
+                    else ""
+                ),
                 id="brand",
             )
             yield ProviderListView(id="providers")
@@ -327,7 +352,10 @@ class ProviderManagerApp(App[Provider | None]):
             self.push_screen(ProviderFormScreen(self.catalog_path, None), self._form_finished)
 
     def action_settings(self) -> None:
-        self.push_screen(SettingsScreen(self.catalog_path), self._settings_finished)
+        self.push_screen(
+            SettingsScreen(self.catalog_path, self.providers),
+            self._settings_finished,
+        )
 
     def _settings_finished(self, changed: bool | None) -> None:
         if changed:
@@ -390,6 +418,25 @@ class ProviderManagerApp(App[Provider | None]):
             status.update("Enable at least one provider before syncing.")
             status.add_class("error")
             return
+        if sys.platform == "win32":
+            mode = self.app_settings["windows"]["mode"]
+            if mode == "portable":
+                from .windows_portable import portable_status
+
+                try:
+                    installed = portable_status().installed
+                except ConfigError:
+                    installed = False
+                if not installed:
+                    self.push_screen(
+                        WindowsDesktopScreen(
+                            self.catalog_path,
+                            self.providers,
+                            initial_tab="portable",
+                        ),
+                        self._windows_settings_finished,
+                    )
+                    return
         if self.target_path is None:
             self.exit(provider)
             return
@@ -397,6 +444,13 @@ class ProviderManagerApp(App[Provider | None]):
             ApplyScreen(provider, self.settings_for(provider), self.target_path),
             self._apply_finished,
         )
+
+    def _windows_settings_finished(self, changed: bool | None) -> None:
+        self.app_settings = load_settings(self.catalog_path)
+        if changed:
+            self.query_one("#status", Static).update(
+                "Windows desktop settings updated. Choose an enabled provider and sync."
+            )
 
     def settings_for(self, provider: Provider) -> CodexSettings:
         return CodexSettings(
@@ -481,13 +535,20 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         "web_search_tool_type": "Selects the configured web-search mode sent to Codex.",
         "input_modalities": "Controls whether models accept text only or text plus images.",
         "context_profiles": "Configures maximum context tokens and when automatic compacting begins.",
+        "windows_desktop": "Chooses the signed Official app or Codexier's writable Portable app.",
     }
 
-    def __init__(self, catalog_path):
+    def __init__(self, catalog_path, providers: tuple[Provider, ...] = ()):
         super().__init__()
         self.catalog_path = catalog_path
+        self.providers = providers
         self.settings = load_settings(catalog_path)
         self.index = 0
+        self.setting_keys = self.SETTING_KEYS + (
+            (("windows_desktop", "Windows desktop apps"),)
+            if sys.platform == "win32"
+            else ()
+        )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
@@ -509,7 +570,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
 
     def _render_settings(self) -> None:
         view = self.query_one("#settings", ListView)
-        for key, label in self.SETTING_KEYS:
+        for key, label in self.setting_keys:
             value = self._setting_value(key)
             display = self._setting_display(key, value)
             explanation = self.SETTING_DESCRIPTIONS[key]
@@ -521,7 +582,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             )
 
     def _refresh_setting(self, key: str) -> None:
-        label = next(label for setting_key, label in self.SETTING_KEYS if setting_key == key)
+        label = next(label for setting_key, label in self.setting_keys if setting_key == key)
         value = self._setting_value(key)
         display = self._setting_display(key, value)
         explanation = self.SETTING_DESCRIPTIONS[key]
@@ -534,6 +595,8 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
                 self.settings["context_window"],
                 self.settings["auto_compact_token_limit"],
             )
+        if key == "windows_desktop":
+            return self.settings["windows"]["mode"]
         return self.settings.get(key)
 
     @staticmethod
@@ -543,18 +606,26 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         if key == "context_profiles":
             maximum, compact = value
             return f"{maximum:,} MAX / {compact:,} COMPACT"
+        if key == "windows_desktop":
+            return f"{str(value).upper()} APP"
         return "OFF" if value in (False, None, "") else str(value).upper()
 
     def _selected_key(self) -> str:
         item = self.query_one("#settings", ListView).highlighted_child
         if item and item.id:
-            return next((key for key, _ in self.SETTING_KEYS if widget_id("setting", key) == item.id), self.SETTING_KEYS[0][0])
-        return self.SETTING_KEYS[0][0]
+            return next((key for key, _ in self.setting_keys if widget_id("setting", key) == item.id), self.setting_keys[0][0])
+        return self.setting_keys[0][0]
 
     def action_toggle(self) -> None:
         key = self._selected_key()
         if key == "context_profiles":
             self.app.push_screen(ContextProfilesScreen(self.catalog_path), self._context_profiles_finished)
+            return
+        if key == "windows_desktop":
+            self.app.push_screen(
+                WindowsDesktopScreen(self.catalog_path, self.providers),
+                self._windows_desktop_finished,
+            )
             return
         if key == "web_search_tool_type":
             self.settings[key] = None if self.settings.get(key) else "text"
@@ -574,6 +645,14 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             self._refresh_setting("context_profiles")
             self.query_one("#status", Static).update("Context profile saved. Press Enter to save settings.")
 
+    def _windows_desktop_finished(self, changed: bool | None) -> None:
+        if changed:
+            self.settings = load_settings(self.catalog_path)
+            self._refresh_setting("windows_desktop")
+            self.query_one("#status", Static).update(
+                "Windows desktop mode saved. Press Enter to save settings."
+            )
+
     def action_cancel(self) -> None:
         self.dismiss(None)
 
@@ -582,6 +661,246 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             self.action_save()
         elif event.button.id == "back":
             self.action_cancel()
+
+
+class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
+    TITLE = "Codexier"
+    CSS = """
+    Screen { background: #0b1020; color: #e7eefc; }
+    #shell { width: 98%; height: 1fr; margin: 1; padding: 1 2; border: round #3b82f6; background: #131d38; }
+    TabbedContent { height: 1fr; }
+    TabPane { padding: 1 2; }
+    .provider-list { height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; }
+    .provider-list > ListItem { min-height: 3; padding: 1 2; }
+    .actions { height: auto; min-height: 4; margin-top: 1; }
+    Button { margin-right: 1; background: #2563eb; color: white; }
+    #back, #log-toggle { background: #374151; }
+    #windows-status { height: auto; min-height: 4; color: #8be9fd; padding: 1 0; }
+    #windows-log { height: 10; border: round #263b68; background: #080d19; }
+    .error { color: #ff6b8a; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", "Back", priority=True),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
+    ]
+
+    def __init__(
+        self,
+        catalog_path,
+        providers: tuple[Provider, ...] = (),
+        *,
+        initial_tab: str | None = None,
+    ):
+        super().__init__()
+        self.catalog_path = catalog_path
+        self.providers = providers
+        self.settings = load_settings(catalog_path)
+        mode = initial_tab or self.settings["windows"]["mode"]
+        self.initial_tab = f"{mode}-tab"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="shell"):
+            yield Static("WINDOWS DESKTOP APPS  /  SHARED LOWERCASE codexier PROFILE")
+            with TabbedContent(initial=self.initial_tab):
+                with TabPane("Official Codex App", id="official-tab"):
+                    yield Static(
+                        "The signed Microsoft Store package stays untouched. "
+                        "Choose one enabled custom provider for this mode."
+                    )
+                    yield ListView(id="official-providers", classes="provider-list")
+                    with Horizontal(classes="actions"):
+                        yield Button(
+                            "Sync and launch official app",
+                            id="official-sync",
+                            variant="primary",
+                        )
+                with TabPane("Portable App", id="portable-tab"):
+                    yield Static(
+                        "Codexier clones the installed Store payload into LocalAppData, "
+                        "patches only that copy, and exposes every enabled provider."
+                    )
+                    yield ListView(id="portable-providers", classes="provider-list")
+                    with Horizontal(classes="actions"):
+                        yield Button("Create portable app", id="portable-create")
+                        yield Button("Refresh portable app", id="portable-refresh")
+                        yield Button("Repair patch", id="portable-repair")
+                        yield Button(
+                            "Sync and launch portable app",
+                            id="portable-sync",
+                            variant="primary",
+                        )
+            yield Static("Loading Windows desktop status …", id="windows-status")
+            yield RichLog(id="windows-log", wrap=True, markup=True)
+            with Horizontal(classes="actions"):
+                yield Button("Show / hide detailed log", id="log-toggle")
+                yield Button("Back to settings", id="back")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        log = self.query_one("#windows-log", RichLog)
+        log.display = False
+        if not self.providers:
+            from .provider_store import ProviderStore
+
+            self.providers = ProviderStore(self.catalog_path).load()
+        enabled = tuple(provider for provider in self.providers if provider.enabled)
+        for view_id, selection_key in (
+            ("official-providers", "official_provider_id"),
+            ("portable-providers", "portable_default_provider_id"),
+        ):
+            view = self.query_one(f"#{view_id}", ListView)
+            for provider in enabled:
+                await view.append(
+                    ListItem(
+                        Label(f"◆  {provider.name} · {len(provider.models)} models"),
+                        id=widget_id(view_id, provider.id),
+                    )
+                )
+            selected_id = self.settings["windows"].get(selection_key)
+            view.index = next(
+                (
+                    index
+                    for index, provider in enumerate(enabled)
+                    if provider.id == selected_id
+                ),
+                0 if enabled else None,
+            )
+        self.run_worker(self._load_status(), exclusive=True)
+
+    async def _load_status(self) -> None:
+        status = self.query_one("#windows-status", Static)
+        try:
+            from .windows_portable import discover_official_package, portable_status
+
+            package = await asyncio.to_thread(discover_official_package)
+            portable = portable_status(package)
+            status.update(
+                f"Official package  {package.version} · {package.aumid}\n"
+                f"Portable path     {portable.root}\n"
+                f"Portable state    {portable.message}"
+            )
+        except (ConfigError, OSError) as exc:
+            status.update(str(exc))
+            status.add_class("error")
+
+    def _selected_provider(self, view_id: str) -> Provider | None:
+        item = self.query_one(f"#{view_id}", ListView).highlighted_child
+        if not item or not item.id:
+            return None
+        return next(
+            (
+                provider
+                for provider in self.providers
+                if widget_id(view_id, provider.id) == item.id
+            ),
+            None,
+        )
+
+    def _write_desktop_config(self, selected: Provider) -> object:
+        from .windows_portable import require_shared_codex_home
+
+        enabled = tuple(provider for provider in self.providers if provider.enabled)
+        if not enabled:
+            raise ConfigError("Enable at least one provider before creating Portable Codex.")
+        path = require_shared_codex_home() / "desktop-model-providers.json"
+        atomic_write(
+            path,
+            (
+                json.dumps(
+                    build_desktop_provider_config(enabled, selected),
+                    indent=2,
+                )
+                + "\n"
+            ).encode(),
+            mode=0o600,
+        )
+        return path
+
+    def _progress(self, percent: int, detail: str) -> None:
+        self.app.call_from_thread(self._show_progress, percent, detail)
+
+    def _show_progress(self, percent: int, detail: str) -> None:
+        self.query_one("#windows-status", Static).update(f"{percent:3d}%  {detail}")
+        self.query_one("#windows-log", RichLog).write(
+            f"[cyan]{percent:3d}%[/cyan] {detail}"
+        )
+
+    async def _run_action(self, action: str) -> None:
+        status = self.query_one("#windows-status", Static)
+        view_id = "official-providers" if action == "official-sync" else "portable-providers"
+        selected = self._selected_provider(view_id)
+        if selected is None:
+            status.update("Enable and select a provider first.")
+            status.add_class("error")
+            return
+        try:
+            from .windows_portable import (
+                install_portable,
+                repair_portable,
+                sync_and_launch_windows,
+            )
+
+            self.settings = load_settings(self.catalog_path)
+            windows = self.settings["windows"]
+            if action == "official-sync":
+                windows["mode"] = "official"
+                windows["official_provider_id"] = selected.id
+                await asyncio.to_thread(
+                    sync_and_launch_windows,
+                    self.catalog_path,
+                    self.providers,
+                    selected,
+                    self.settings,
+                    progress=self._progress,
+                )
+            elif action in {"portable-create", "portable-refresh"}:
+                windows["mode"] = "portable"
+                windows["portable_default_provider_id"] = selected.id
+                await asyncio.to_thread(
+                    install_portable,
+                    None,
+                    prepare_config=lambda: self._write_desktop_config(selected),
+                    refresh=action == "portable-refresh",
+                    progress=self._progress,
+                )
+                save_settings(self.catalog_path, self.settings)
+            elif action == "portable-repair":
+                await asyncio.to_thread(
+                    repair_portable,
+                    None,
+                    prepare_config=lambda: self._write_desktop_config(selected),
+                    progress=self._progress,
+                )
+            else:
+                windows["mode"] = "portable"
+                windows["portable_default_provider_id"] = selected.id
+                await asyncio.to_thread(
+                    sync_and_launch_windows,
+                    self.catalog_path,
+                    self.providers,
+                    selected,
+                    self.settings,
+                    progress=self._progress,
+                )
+        except (ConfigError, PatchError, OSError) as exc:
+            status.update(str(exc))
+            status.add_class("error")
+            self.query_one("#windows-log", RichLog).write(f"[red]ERROR[/red] {exc}")
+            return
+        status.remove_class("error")
+        await self._load_status()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.dismiss(True)
+        elif event.button.id == "log-toggle":
+            log = self.query_one("#windows-log", RichLog)
+            log.display = not log.display
+        elif event.button.id:
+            self.run_worker(self._run_action(event.button.id), exclusive=True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class ContextProfilesScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):

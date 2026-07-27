@@ -8,9 +8,11 @@ package payload.
 from __future__ import annotations
 
 import os
+import ntpath
 import platform as platform_module
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +21,7 @@ from .errors import ConfigError
 from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV6"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV7"
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class DesktopPatchTarget:
     archive_path: Path
     metadata_path: Path | None = None
     package_type: str = "unknown"
+    diagnostic: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,50 +53,148 @@ def default_target(platform: str | None = None) -> DesktopPatchTarget:
 
 
 def _windows_default_target() -> DesktopPatchTarget:
-    override = os.environ.get("CODEXIER_WINDOWS_APP_ASAR")
-    if override:
-        archive = Path(override).expanduser()
+    from .desktop_patch_macos import PatchError, asar_header_hash
+    from .process_manager import detect_chatgpt_processes
+
+    processes = detect_chatgpt_processes(platform="win32")
+    if not processes:
+        return _windows_skip_target(
+            "Desktop patch skipped: no current-user ChatGPT or Codex desktop "
+            "process is running. Open the unpackaged desktop app once, then "
+            "sync enabled providers again."
+        )
+
+    roots = {
+        _windows_path_key(_windows_process_root(process.executable)):
+        _windows_process_root(process.executable)
+        for process in processes
+    }
+    if len(roots) != 1:
+        names = ", ".join(str(root) for root in roots.values())
+        return _windows_skip_target(
+            "Desktop patch skipped: multiple running desktop installations were "
+            f"detected ({names}). Close all but one, then sync enabled providers again."
+        )
+
+    root = next(iter(roots.values()))
+    candidates = (
+        root / "resources" / "app.asar",
+        root / "app" / "resources" / "app.asar",
+    )
+    if _is_windows_msix_path(root):
         return DesktopPatchTarget(
             "windows",
-            archive,
-            _windows_metadata_path(archive),
-            "unpackaged",
+            next((path for path in candidates if path.is_file()), candidates[-1]),
+            package_type="msix",
+            diagnostic=(
+                "Desktop patch skipped: the running app is a signed Microsoft "
+                "Store/MSIX package. Install and run the unpackaged desktop "
+                "version, then sync enabled providers again."
+            ),
         )
-    for archive in _windows_unpacked_archives():
-        if archive.is_file():
-            return DesktopPatchTarget(
-                "windows",
-                archive,
-                _windows_metadata_path(archive),
-                "unpackaged",
+
+    valid: list[Path] = []
+    failures: list[str] = []
+    for archive in candidates:
+        if not archive.is_file():
+            continue
+        if not _windows_path_is_within(archive, root):
+            failures.append(f"{archive} is outside the running installation root")
+            continue
+        if _is_windows_msix_path(archive):
+            failures.append(f"{archive} belongs to a signed Microsoft Store/MSIX package")
+            continue
+        try:
+            asar_header_hash(archive)
+        except PatchError as exc:
+            failures.append(f"{archive} is not a valid ASAR ({exc})")
+            continue
+        write_error = _windows_write_probe(archive.parent)
+        if write_error:
+            failures.append(f"{archive} is not writable ({write_error})")
+            continue
+        valid.append(archive)
+
+    override = os.environ.get("CODEXIER_WINDOWS_APP_ASAR")
+    if override:
+        selected = Path(override).expanduser()
+        valid = [
+            path for path in valid
+            if _windows_path_key(path) == _windows_path_key(selected)
+        ]
+        if not valid:
+            return _windows_skip_target(
+                "Desktop patch skipped: CODEXIER_WINDOWS_APP_ASAR does not select "
+                "a validated archive used by the running unpackaged app. Remove "
+                "the override or point it to that runtime's app.asar."
             )
-    package_root = _windows_package_root()
-    resources = package_root / "app" / "resources"
-    archive = resources / "app.asar"
+
+    if len(valid) > 1:
+        names = ", ".join(str(path) for path in valid)
+        return _windows_skip_target(
+            "Desktop patch skipped: multiple valid app.asar archives were found "
+            f"in the running installation ({names}). Set CODEXIER_WINDOWS_APP_ASAR "
+            "to select one of them."
+        )
+    if not valid:
+        detail = "; ".join(failures) or "no supported app.asar layout was found"
+        return _windows_skip_target(
+            "Desktop patch skipped: the running unpackaged desktop runtime could "
+            f"not be validated: {detail}. Reinstall the unpackaged app or fix its "
+            "folder permissions, then sync enabled providers again."
+        )
+
+    archive = valid[0]
     return DesktopPatchTarget(
-        "windows",
-        archive,
-        _windows_metadata_path(archive),
-        "msix",
+        "windows", archive, _windows_metadata_path(archive), "unpackaged"
     )
 
 
-def _windows_unpacked_archives() -> tuple[Path, ...]:
-    """Return common unpackaged Electron install paths without shell commands."""
-    local_app_data = Path(os.environ.get("LOCALAPPDATA", r"C:\Users\Default\AppData\Local"))
-    program_files = Path(os.environ.get("ProgramW6432", r"C:\Program Files"))
-    roots = (
-        local_app_data / "Programs" / "ChatGPT",
-        local_app_data / "Programs" / "Codex",
-        local_app_data / "ChatGPT",
-        local_app_data / "Codex",
-        program_files / "ChatGPT",
-        program_files / "Codex",
-    )
-    return tuple(
-        archive
-        for root in roots
-        for archive in (root / "resources" / "app.asar", root / "app" / "resources" / "app.asar")
+def _windows_process_root(executable: str) -> Path:
+    return Path(ntpath.dirname(executable) or ".")
+
+
+def _windows_path_key(path: Path) -> str:
+    return ntpath.normcase(ntpath.normpath(str(path))).casefold()
+
+
+def _windows_path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+    except OSError:
+        pass
+
+    path_key = _windows_path_key(path)
+    root_key = _windows_path_key(root).rstrip("\\")
+    return path_key == root_key or path_key.startswith(root_key + "\\")
+
+
+def _is_windows_msix_path(path: Path) -> bool:
+    parts = ntpath.normpath(str(path)).split("\\")
+    if "windowsapps" in {part.casefold() for part in parts}:
+        return True
+    return any((candidate / "AppxManifest.xml").is_file() for candidate in (path, *path.parents))
+
+
+def _windows_write_probe(directory: Path) -> str | None:
+    name: str | None = None
+    try:
+        handle, name = tempfile.mkstemp(prefix=".codexier-write-probe-", dir=directory)
+        os.close(handle)
+        Path(name).unlink()
+        return None
+    except OSError as exc:
+        if name:
+            Path(name).unlink(missing_ok=True)
+        return str(exc)
+
+
+def _windows_skip_target(message: str) -> DesktopPatchTarget:
+    return DesktopPatchTarget(
+        "windows", Path("app.asar"), package_type="unavailable", diagnostic=message
     )
 
 
@@ -107,23 +208,18 @@ def _windows_metadata_path(archive: Path) -> Path | None:
     return None
 
 
-def _windows_package_root() -> Path:
-    packages = Path(os.environ.get("ProgramW6432", r"C:\Program Files")) / "WindowsApps"
-    matches = sorted(
-        (
-            *packages.glob("OpenAI.Codex_*"),
-            *packages.glob("OpenAI.ChatGPT_*"),
-        ),
-        key=lambda path: path.name,
-    )
-    if matches:
-        return matches[-1]
-    # The Store package is normally protected; use this only as a clear
-    # diagnostic path when package discovery was unavailable.
-    return Path(r"C:\Program Files\WindowsApps\OpenAI.Codex")
-
-
 def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
+    if target.diagnostic:
+        return DesktopPatchStatus(target, False, False, target.diagnostic, skipped=True)
+    if target.platform == "windows" and target.package_type == "msix":
+        return DesktopPatchStatus(
+            target,
+            False,
+            False,
+            "Microsoft Store/MSIX package detected. Codexier will not modify "
+            "signed package files.",
+            True,
+        )
     try:
         content = target.archive_path.read_bytes()
     except OSError as exc:
@@ -132,14 +228,6 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
         return DesktopPatchStatus(target, True, True, "Codexier desktop patch is installed.")
     if target.platform == "darwin":
         return DesktopPatchStatus(target, False, True, "macOS app is ready for source validation.")
-    if target.package_type == "msix":
-        return DesktopPatchStatus(
-            target,
-            False,
-            False,
-            "Microsoft Store/MSIX package detected. Codexier will not modify "
-            "signed package files.",
-        )
     return DesktopPatchStatus(
         target,
         False,
@@ -182,20 +270,12 @@ def apply_desktop_patch(
 
     report(emit, "detection", f"inspecting {target.archive_path}")
     status = patch_status(target)
+    if status.skipped:
+        report(emit, "completion", status.message)
+        return status
     if status.patched:
         report(emit, "completion", "already patched; app.asar was not modified")
         return status
-    if target.platform == "windows" and target.package_type == "msix":
-        skipped = DesktopPatchStatus(
-            target,
-            False,
-            False,
-            "Desktop patch skipped: Microsoft Store/MSIX package detected. "
-            "Codexier will not modify signed package files.",
-            True,
-        )
-        report(emit, "completion", skipped.message)
-        return skipped
     if not status.supported:
         raise ConfigError(status.message)
     if target.platform == "darwin":
@@ -259,6 +339,8 @@ def apply_desktop_patch(
 
 
 def restore_desktop_patch(target: DesktopPatchTarget, backup: Path) -> None:
+    if target.diagnostic:
+        raise ConfigError(target.diagnostic)
     source = backup / "app.asar"
     if not source.is_file():
         raise ConfigError(f"Backup does not contain app.asar: {backup}")

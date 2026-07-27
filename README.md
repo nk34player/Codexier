@@ -39,17 +39,42 @@ create separate Codex profiles. Existing catalogs that predate toggles retain
 their previous Codexier fallback as enabled when it can be matched safely.
 On Linux, run `codex --profile codexier`.
 
-After every successful sync, Codexier automatically checks the desktop app on
-macOS and unpackaged Windows Electron installs. It displays percentage
-milestones and an expandable terminal log while it validates the supported
-bundle, asks the app to close gracefully, backs it up, patches it, verifies
-it, and reopens it only if it was already running. If the app will not close,
-patching is safely skipped—no process is force-closed and no app data is
-touched. Already-patched installs report success without changing `app.asar`.
-ChatGPT updates require re-patching. Windows Microsoft Store/MSIX packages
-remain untouched because they are signed; Codexier reports that safe skip.
-Patching never rolls back a successful provider sync. Linux uses the normal
-`codexier` profile rather than a desktop patch.
+On macOS, every successful sync automatically checks and patches the supported
+desktop bundle. Codexier shows percentage milestones and a detailed terminal
+log while it closes the app gracefully, backs up `app.asar`, patches, verifies,
+and restores on failure. Already-patched installs report success without
+rewriting the archive.
+
+# Windows desktop modes
+
+Open **Settings → Windows desktop apps** and choose one of two modes:
+
+- **Official Codex App:** keeps the signed Microsoft Store package untouched
+  and exports exactly one selected enabled custom provider and its models.
+- **Portable App:** copies the installed `OpenAI.Codex` payload into
+  `%LOCALAPPDATA%\Codexier\PortableCodex`, verifies the copy, and patches only
+  that managed copy. It exports every enabled provider through the provider-first
+  model picker.
+
+Portable creation and refresh use the installed Store package as a read-only
+source. Codexier never changes `WindowsApps`, removes package signatures, or
+registers a modified AppX/MSIX. It does not require Codex App Manager, a mirror,
+or another external project. Refreshes are manual from **Refresh portable app**;
+use **Repair patch** after a patch problem.
+
+Both modes use the same lowercase `codexier` profile, displayed as `Codexier`,
+and the standard `%USERPROFILE%\.codex` home. Existing sessions, chats,
+workspaces, credentials, projects, accounts, and unrelated configuration stay in
+place. Codexier does not copy, migrate, filter, or delete them. If `CODEX_HOME`
+points elsewhere, Windows dual-app launch is blocked until it is unset or points
+to the standard `.codex` directory.
+
+Before switching or updating, Codexier requests a graceful close of all Official
+and Portable Codex windows. It never force-kills them. A failed close aborts
+before configuration or application files change. Portable install and patch
+operations show numbered progress and detailed logs; failures after replacement
+restore and verify the previous managed portable payload. The Store source and
+user data remain untouched.
 
 ## Options
 
@@ -61,7 +86,8 @@ Patching never rolls back a successful provider sync. Linux uses the normal
 --no-restart       Do not prompt to restart Codex
 --restart          Attempt a safe Codex restart
 --print-command    Print the normal Codexier CLI command
---patch-desktop    Also request desktop patch handling (automatic on macOS/Windows)
+--patch-desktop    Also request desktop patch handling (automatic on macOS; Windows
+                   uses Settings → Official Codex App / Portable App)
 --restore-desktop-patch BACKUP
                    Restore a desktop patch backup
 ```

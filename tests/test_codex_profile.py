@@ -8,6 +8,7 @@ from codexier.codex_profile import (
     apply_codex_profile,
     apply_codex_profiles,
     build_catalog,
+    build_desktop_provider_config,
     ensure_unique_model_ids,
     provider_profile_id,
 )
@@ -35,6 +36,27 @@ def test_build_catalog_contains_codex_model_metadata():
     assert catalog["models"][0]["supports_parallel_tool_calls"] is False
     assert catalog["models"][0]["support_verbosity"] is False
     assert catalog["models"][0]["input_modalities"] == ["text", "image"]
+
+
+def test_desktop_picker_uses_the_exact_tui_provider_name():
+    named = Provider(
+        "private-eu",
+        "Private EU + Prod",
+        "https://private.example/v1",
+        "secret",
+        (ModelDefinition("model-id", "Model Label"),),
+        {},
+    )
+
+    config = build_desktop_provider_config((named,), named)
+
+    assert config["providers"] == [
+        {
+            "id": "codexier-private-eu",
+            "label": "Private EU + Prod",
+            "models": [{"id": "model-id", "label": "Model Label"}],
+        }
+    ]
 
 
 def test_build_catalog_can_disable_image_input():
@@ -181,7 +203,7 @@ def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: P
     desktop = json.loads(result.desktop_config_path.read_text())
     assert desktop["version"] == 2
     assert desktop["default_provider"] == "codexier-other"
-    assert desktop["providers"][2]["models"] == [
+    assert desktop["providers"][1]["models"] == [
         {"id": "other/model", "label": "Other Model"}
     ]
 
@@ -214,8 +236,8 @@ def test_duplicate_model_ids_are_disambiguated_by_provider_in_desktop_config(tmp
     ensure_unique_model_ids((provider(), duplicate))
     result = apply_codex_profiles((provider(), duplicate), provider(), tmp_path / ".codex")
     desktop = json.loads(result.desktop_config_path.read_text())
-    assert desktop["providers"][1]["models"][0]["id"] == "gpt-5.2"
-    assert desktop["providers"][2]["models"] == [
+    assert desktop["providers"][0]["models"][0]["id"] == "gpt-5.2"
+    assert desktop["providers"][1]["models"] == [
         {"id": "gpt-5.2", "label": "Different label"}
     ]
 
@@ -246,4 +268,5 @@ def test_apply_skips_disabled_providers_and_removes_stale_codexier_entries(
     assert "codexier-old" not in config["model_providers"]
     assert "codexier-old" not in config["profiles"]
     assert config["model_providers"]["unrelated"]["name"] == "keep"
-    assert [item["id"] for item in desktop["providers"]] == ["openai", "codexier-demo"]
+    assert [item["id"] for item in desktop["providers"]] == ["codexier-demo"]
+    assert all(item["id"] != "openai" for item in desktop["providers"])

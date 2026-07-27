@@ -27,6 +27,12 @@ class RestartResult:
 
 
 @dataclass(frozen=True)
+class CloseResult:
+    closed: bool
+    message: str
+
+
+@dataclass(frozen=True)
 class ChatGPTProcess:
     pid: int
     executable: str
@@ -96,18 +102,18 @@ def detect_chatgpt_processes(
     platform: str | None = None,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[ChatGPTProcess, ...]:
-    """Find the current user's Windows ChatGPT desktop processes.
+    """Find the current user's Windows ChatGPT or Codex desktop processes.
 
-    Detection is deliberately limited to the ChatGPT executable and the
-    current user. This prevents a provider change from terminating unrelated
-    processes or another user's ChatGPT session.
+    Detection is deliberately limited to those executables and the current
+    user. This prevents a provider change from terminating unrelated processes
+    or another user's desktop session.
     """
     if (platform or sys.platform) != "win32":
         return ()
 
     script = (
         "$ErrorActionPreference='SilentlyContinue'; "
-        "$items = @(Get-Process -Name 'ChatGPT' -IncludeUserName | "
+        "$items = @(Get-Process -Name 'ChatGPT','Codex' -IncludeUserName | "
         "Select-Object Id,Path,UserName); "
         "$items | ConvertTo-Json -Compress"
     )
@@ -139,10 +145,73 @@ def detect_chatgpt_processes(
         username = str(item.get("UserName") or "")
         owner = username.rsplit("\\", 1)[-1].casefold()
         executable = str(item.get("Path") or "")
-        if owner != current_user or not executable:
+        executable_name = os.path.basename(executable.replace("\\", os.sep)).casefold()
+        if (
+            owner != current_user
+            or executable_name not in {"chatgpt.exe", "codex.exe"}
+        ):
             continue
         processes.append(ChatGPTProcess(pid, executable, username))
     return tuple(processes)
+
+
+def gracefully_close_chatgpt_processes(
+    processes: Sequence[ChatGPTProcess],
+    *,
+    timeout_seconds: float = 8.0,
+    request_close: Callable[[int], object] | None = None,
+    poll: Callable[[int], bool] | None = None,
+) -> CloseResult:
+    """Request normal window closure and never force-terminate a desktop app."""
+    if not processes:
+        return CloseResult(True, "No current-user Codex desktop process is running.")
+
+    def close_window(pid: int) -> object:
+        return subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                (
+                    f"$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+                    "if ($null -ne $p) { [void]$p.CloseMainWindow() }"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def is_running(pid: int) -> bool:
+        result = subprocess.run(
+            ["tasklist.exe", "/FI", f"PID eq {pid}", "/NH"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return str(pid) in result.stdout
+
+    close = request_close or close_window
+    check_running = poll or is_running
+    try:
+        for process in processes:
+            close(process.pid)
+        deadline = time.monotonic() + timeout_seconds
+        pending = {process.pid for process in processes}
+        while pending and time.monotonic() < deadline:
+            pending = {pid for pid in pending if check_running(pid)}
+            if pending:
+                time.sleep(0.1)
+    except OSError as exc:
+        return CloseResult(False, f"Could not verify graceful app shutdown: {exc}")
+    if pending:
+        ids = ", ".join(str(pid) for pid in sorted(pending))
+        return CloseResult(
+            False,
+            f"Codex is still running (PIDs: {ids}). Close it normally and try again.",
+        )
+    return CloseResult(True, "Codex desktop app closed normally.")
 
 
 def restart_chatgpt(

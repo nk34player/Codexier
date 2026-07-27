@@ -6,7 +6,7 @@ from textual.app import App
 from textual.widgets import Label, ListItem
 
 from codexier.settings import DEFAULT_SETTINGS, MAX_CONTEXT_WINDOW, load_settings, save_settings
-from codexier.setup_tui import ContextProfilesScreen, SettingsScreen
+from codexier.setup_tui import ContextProfilesScreen, SettingsScreen, WindowsDesktopScreen
 
 
 def test_settings_are_created_next_to_provider_catalog(tmp_path: Path):
@@ -29,8 +29,35 @@ def test_settings_round_trip(tmp_path: Path):
         "auto_compact_token_limit": 60000,
     }
     save_settings(provider_path, settings)
-    assert load_settings(provider_path) == settings
-    assert json.loads((tmp_path / "codexier.settings.json").read_text()) == settings
+    expected = {**settings, "windows": DEFAULT_SETTINGS["windows"]}
+    assert load_settings(provider_path) == expected
+    assert json.loads((tmp_path / "codexier.settings.json").read_text()) == expected
+
+
+def test_windows_mode_selections_round_trip_independently(tmp_path: Path):
+    provider_path = tmp_path / "providers.json"
+    settings = load_settings(provider_path)
+    settings["windows"] = {
+        "mode": "portable",
+        "official_provider_id": "official-provider",
+        "portable_default_provider_id": "portable-provider",
+    }
+    save_settings(provider_path, settings)
+    assert load_settings(provider_path)["windows"] == settings["windows"]
+
+
+def test_windows_settings_screen_exposes_official_and_portable_actions(tmp_path: Path):
+    screen = WindowsDesktopScreen(tmp_path / "providers.json")
+    copy = "\n".join(
+        value for value in screen.compose.__code__.co_consts if isinstance(value, str)
+    )
+    assert "Official Codex App" in copy
+    assert "Portable App" in copy
+    assert "Sync and launch official app" in copy
+    assert "Create portable app" in copy
+    assert "Refresh portable app" in copy
+    assert "Repair patch" in copy
+    assert "Sync and launch portable app" in copy
 
 
 def test_settings_accept_maximum_context_limit(tmp_path: Path):

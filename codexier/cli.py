@@ -41,8 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--print-command", action="store_true",
                         help="Print the normal Codexier CLI command after syncing.")
-    parser.add_argument("--patch-desktop", action="store_true",
-                        help="Install the provider-first desktop picker on macOS or unpackaged Windows.")
+    parser.add_argument(
+        "--patch-desktop",
+        action="store_true",
+        help=(
+            "Install the provider-first desktop picker on macOS. Windows uses "
+            "Settings → Official Codex App / Portable App; signed MSIX files "
+            "are never modified."
+        ),
+    )
     parser.add_argument("--restore-desktop-patch", type=Path, metavar="BACKUP",
                         help="Restore a desktop patch backup and exit.")
     return parser
@@ -50,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _desktop_patch_progress(percent: int, detail: str) -> None:
     print(f"[desktop patch {percent:3d}%] {detail}")
+
+
+def _windows_progress(percent: int, detail: str) -> None:
+    print(f"[windows app {percent:3d}%] {detail}")
 
 
 def _apply_post_sync_desktop_patch() -> None:
@@ -109,11 +120,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                     else None
                 )
             )
+            app_settings = load_settings(catalog_path)
+            applied_id = legacy_codexier_provider_id(providers, target.path)
+            if sys.platform == "win32":
+                windows = app_settings["windows"]
+                applied_id = (
+                    windows.get(
+                        "official_provider_id"
+                        if windows["mode"] == "official"
+                        else "portable_default_provider_id"
+                    )
+                    or applied_id
+                )
             provider = run_provider_manager(
                 catalog_path,
                 providers,
                 None if args.dry_run else target.path,
-                applied_id=legacy_codexier_provider_id(providers, target.path),
+                applied_id=applied_id,
                 migration_message=migration_message,
             )
             if provider is None:
@@ -128,14 +151,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
 
             if target.format == "toml" or target.path.name == "config.toml":
-                result = apply_codex_profiles(
-                    providers, provider, settings=load_settings(catalog_path)
-                )
+                if sys.platform == "win32":
+                    from .windows_portable import sync_and_launch_windows
+
+                    windows_result = sync_and_launch_windows(
+                        catalog_path,
+                        providers,
+                        provider,
+                        app_settings,
+                        progress=_windows_progress,
+                    )
+                    result = windows_result.profile
+                    print(windows_result.message)
+                else:
+                    result = apply_codex_profiles(
+                        providers, provider, settings=app_settings
+                    )
                 print(f"Codex profile installed: {result.config_path}")
                 print(f"Model catalog installed: {result.catalog_path}")
                 if args.print_command or sys.platform.startswith("linux"):
                     print("Run: " + " ".join(launch_command()))
-                if sys.platform in {"darwin", "win32"} or args.patch_desktop:
+                if sys.platform == "darwin" or (
+                    args.patch_desktop and sys.platform != "win32"
+                ):
                     _apply_post_sync_desktop_patch()
             else:
                 from .backup import atomic_write, backup_config
@@ -145,7 +183,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 atomic_write(target.path, target.adapter.serialize(updated))
                 print(f"Configuration updated: {target.path}")
 
-            if sys.platform == "win32":
+            if sys.platform == "win32" and (
+                target.format == "toml" or target.path.name == "config.toml"
+            ):
+                pass
+            elif sys.platform == "win32":
                 if args.restart:
                     print(restart_codex(detect_codex_processes(), force=True).message)
                 else:

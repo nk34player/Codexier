@@ -38,31 +38,16 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV6"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV7"
 LEGACY_PATCH_MARKERS = (
     b"__codexDesktopModelProvidersPatchV2",
     b"__codexDesktopModelProvidersPatchV3",
     b"__codexDesktopModelProvidersPatchV4",
     b"__codexDesktopModelProvidersPatchV5",
+    b"__codexDesktopModelProvidersPatchV6",
 )
 ASAR_PACKAGE = "@electron/asar@3.2.10"
 PRETTIER_PACKAGE = "prettier@3.6.2"
-
-DEFAULT_PROVIDER_CONFIG: dict[str, Any] = {
-    "version": 2,
-    "default_provider": "openai",
-    "providers": [
-        {
-            "id": "openai",
-            "label": "ChatGPT / OpenAI",
-            "description": (
-                "Built-in provider; uses your signed-in ChatGPT account"
-            ),
-            "models": [],
-        }
-    ],
-}
-
 
 CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
    if (`data` in e) return e;
@@ -72,14 +57,8 @@ CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
 +function codexProviderRoutingFallback() {
 +  return {
 +    version: 1,
-+    defaultProvider: `openai`,
-+    providers: [
-+      {
-+        id: `openai`,
-+        label: `ChatGPT / OpenAI`,
-+        description: `Uses your signed-in ChatGPT account`,
-+      },
-+    ],
++    defaultProvider: null,
++    providers: [],
 +    modelProviders: {},
 +  };
 +}
@@ -224,14 +203,8 @@ PICKER_DIFF = r"""@@ -10162,6 +10162,204 @@
 +function codexPickerProviderRoutingFallback() {
 +  return {
 +    version: 1,
-+    defaultProvider: `openai`,
-+    providers: [
-+      {
-+        id: `openai`,
-+        label: `ChatGPT / OpenAI`,
-+        description: `Uses your signed-in ChatGPT account`,
-+      },
-+    ],
++    defaultProvider: null,
++    providers: [],
 +    modelProviders: {},
 +  };
 +}
@@ -521,14 +494,8 @@ PICKER_DIFF_26721 = r"""@@ -520849,7 +520849,7 @@
 +function codexPickerProviderRoutingFallback() {
 +  return {
 +    version: 1,
-+    defaultProvider: `openai`,
-+    providers: [
-+      {
-+        id: `openai`,
-+        label: `ChatGPT / OpenAI`,
-+        description: `Uses your signed-in ChatGPT account`,
-+      },
-+    ],
++    defaultProvider: null,
++    providers: [],
 +    modelProviders: {},
 +  };
 +}
@@ -863,7 +830,7 @@ PICKER_DIFF_LEGACY_V2_TO_V3 = r"""@@ -10242,7 +10242,7 @@
 """
 
 
-# Provider-first V4 patch helpers.
+# Provider-first V7 patch helpers.
 def _append_insertion_diff(
     diff: str, context: str, inserted: str
 ) -> str:
@@ -876,15 +843,18 @@ def _append_insertion_diff(
     )
 
 
-def _insert_into_existing_hunk(
-    diff: str, context: str, inserted: str
+def _replace_added_block(
+    diff: str, start: str, end: str, replacement: str
 ) -> str:
-    """Insert lines before a context block already present in an embedded hunk."""
-    needle = "".join(f" {line}\n" for line in context.splitlines())
-    replacement = "".join(f"+{line}\n" for line in inserted.splitlines()) + needle
-    if diff.count(needle) != 1:
-        raise RuntimeError("Embedded patch context is not unique")
-    return diff.replace(needle, replacement)
+    """Replace one generated JavaScript block while retaining source context."""
+    start = f"+{start}\n"
+    end = "".join(f" {line}\n" for line in end.splitlines())
+    if diff.count(start) != 1 or diff.count(end) != 1:
+        raise RuntimeError("Embedded patch block is not unique")
+    before, remainder = diff.split(start, 1)
+    _, after = remainder.split(end, 1)
+    added = "".join(f"+{line}\n" for line in replacement.splitlines())
+    return before + added + end + after
 
 
 def _insert_hunk_before(diff: str, anchor: str, hunk: str) -> str:
@@ -893,11 +863,11 @@ def _insert_hunk_before(diff: str, anchor: str, hunk: str) -> str:
     return diff.replace(anchor, hunk + anchor)
 
 
-CENTRAL_V4_JAVASCRIPT = r"""function codexProviderRoutingFallbackV4() {
+CENTRAL_V7_JAVASCRIPT = r"""function codexProviderRoutingFallbackV4() {
   return {
     version: 2,
-    defaultProvider: `openai`,
-    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
+    defaultProvider: null,
+    providers: [],
   };
 }
 function codexNormalizeProviderRoutingConfigV4(e) {
@@ -933,7 +903,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV5 ??= {
+  return (window.__codexDesktopModelProvidersPatchV7 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -962,16 +932,16 @@ async function codexPatchAppServerParams(e, t) {
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
   if (i == null) return t;
-  if (i.id !== `openai` && !i.models.some((e) => e.id === t.model))
+  if (!i.models.some((e) => e.id === t.model))
     throw Error(`The selected model is not configured for the selected provider`);
   return { ...t, modelProvider: i.id };
 }"""
 
-PICKER_V4_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
+PICKER_V7_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
   return {
     version: 2,
-    defaultProvider: `openai`,
-    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
+    defaultProvider: null,
+    providers: [],
   };
 }
 function codexPickerNormalizeProviderRoutingConfigV4(e) {
@@ -1005,7 +975,7 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV4 ??= {
+  return (window.__codexDesktopModelProvidersPatchV7 ??= {
     config: codexPickerProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1050,10 +1020,6 @@ function codexUseProviderModels(e) {
   }, []);
   let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
   if (o == null) return e;
-  if (o.id === `openai`) {
-    let t = new Set(r.config.providers.flatMap((e) => e.id === `openai` ? [] : e.models.map((e) => e.id)));
-    return e?.filter((e) => !t.has(e.model));
-  }
   return o.models.flatMap((t) => {
     let n = e?.find((e) => e.model === t.id);
     return n == null ? [] : [{ ...n, displayName: `${t.label} (${o.label})` }];
@@ -1070,7 +1036,7 @@ function CodexCustomProviderPickerSection() {
   }, []);
   return (0, wQ.jsxs)(wQ.Fragment, {
     children: [
-      (0, wQ.jsx)(yz.Title, { children: `Provider` }),
+      (0, wQ.jsx)(yz.Title, { children: `Provider for new tasks` }),
       e.providers.map((e) => (0, wQ.jsx)(yz.Item, {
         RightIcon: n === e.id ? Ym : void 0,
         SubText: (0, wQ.jsx)(`span`, {
@@ -1090,18 +1056,20 @@ function CodexCustomProviderPickerSection() {
 # These are deliberately generated rather than hand-written unified-diff
 # lines.  It prevents an accidental missing `+` from creating an invalid
 # embedded patch while retaining exact source-hunk matching.
-CENTRAL_DIFF_26721_V4 = _insert_into_existing_hunk(
+CENTRAL_DIFF_26721_V7 = _replace_added_block(
     CENTRAL_DIFF_26721,
-    "var s9t,\n  c9t,",
-    CENTRAL_V4_JAVASCRIPT,
+    "function codexProviderRoutingFallback() {",
+    "}\nvar s9t,\n  c9t,",
+    CENTRAL_V7_JAVASCRIPT.rsplit("\n", 1)[0],
 )
-PICKER_DIFF_26721_V4 = _insert_into_existing_hunk(
+PICKER_DIFF_26721_V7 = _replace_added_block(
     PICKER_DIFF_26721,
+    "function codexPickerProviderRoutingFallback() {",
     "function CMs(e) {",
-    PICKER_V4_JAVASCRIPT,
+    PICKER_V7_JAVASCRIPT,
 )
-PICKER_DIFF_26721_V4 = _insert_hunk_before(
-    PICKER_DIFF_26721_V4,
+PICKER_DIFF_26721_V7 = _insert_hunk_before(
+    PICKER_DIFF_26721_V7,
     "@@ -549693,6 +549895,7 @@\n",
     _append_insertion_diff(
         "",
@@ -1110,13 +1078,28 @@ PICKER_DIFF_26721_V4 = _insert_hunk_before(
     ),
 )
 
-CENTRAL_DIFF_V4_TO_V5 = r"""@@ V4 marker
- function codexProviderRoutingStateV4() {
--  return (window.__codexDesktopModelProvidersPatchV4 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV5 ??= {
+def _v7_upgrade_diffs(
+    marker: str, heading: str, *, remove_thread_list: bool = False
+ ) -> tuple[str, str]:
+    central = rf"""@@ provider fallback
+ function codexProviderRoutingFallbackV4() {{
+   return {{
+     version: 2,
+-    defaultProvider: `openai`,
+-    providers: [{{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }}],
++    defaultProvider: null,
++    providers: [],
+   }};
+ }}
+@@ provider marker
+ function codexProviderRoutingStateV4() {{
+-  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
++  return (window.__codexDesktopModelProvidersPatchV7 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-   });
-@@ V4 thread safety
+   }});
+"""
+    if remove_thread_list:
+        central += r"""@@ thread safety
  async function codexPatchAppServerParams(e, t) {
 -  if (e === `thread/list`) {
 -    let e = t != null && typeof t === `object` ? t : {};
@@ -1124,33 +1107,54 @@ CENTRAL_DIFF_V4_TO_V5 = r"""@@ V4 marker
 -  }
    if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
 """
-
-# The V4 picker already has the provider-first UI.  The context-only hunk
-# proves it is the expected matching bundle while the central bundle removes
-# the unsafe V4 thread/list rewrite and records the V5 marker.
-PICKER_DIFF_V4_TO_V5 = r"""@@ V4 picker
- function CodexCustomProviderPickerSection() {
-   let r = codexPickerProviderRoutingStateV4(),
+    central += r"""@@ provider validation
+   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
+   if (i == null) return t;
+-  if (i.id !== `openai` && !i.models.some((e) => e.id === t.model))
++  if (!i.models.some((e) => e.id === t.model))
+     throw Error(`The selected model is not configured for the selected provider`);
 """
-
-CENTRAL_DIFF_V5_TO_V6 = r"""@@ V5 marker
- function codexProviderRoutingStateV4() {
--  return (window.__codexDesktopModelProvidersPatchV5 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV6 ??= {
-     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-   });
+    picker = r"""@@ picker fallback
+ function codexPickerProviderRoutingFallbackV4() {
+   return {
+     version: 2,
+-    defaultProvider: `openai`,
+-    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
++    defaultProvider: null,
++    providers: [],
+   };
+ }
+@@ native model preservation
+   let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
+   if (o == null) return e;
+-  if (o.id === `openai`) {
+-    let t = new Set(r.config.providers.flatMap((e) => e.id === `openai` ? [] : e.models.map((e) => e.id)));
+-    return e?.filter((e) => !t.has(e.model));
+-  }
+   return o.models.flatMap((t) => {
 """
-
-PICKER_DIFF_V5_TO_V6 = r"""@@ V5 provider heading
+    if heading == "Provider":
+        picker += r"""@@ provider heading
 -      (0, wQ.jsx)(yz.Title, { children: `Provider` }),
 +      (0, wQ.jsx)(yz.Title, { children: `Provider for new tasks` }),
 """
+    return central, picker
+
+
+CENTRAL_DIFF_V4_TO_V7, PICKER_DIFF_V4_TO_V7 = _v7_upgrade_diffs(
+    "V4", "Provider", remove_thread_list=True
+ )
+CENTRAL_DIFF_V5_TO_V7, PICKER_DIFF_V5_TO_V7 = _v7_upgrade_diffs("V5", "Provider")
+CENTRAL_DIFF_V6_TO_V7, PICKER_DIFF_V6_TO_V7 = _v7_upgrade_diffs(
+    "V6", "Provider for new tasks"
+ )
 
 
 PATCH_VARIANTS: tuple[tuple[str, str, str], ...] = (
-    ("ChatGPT 26.721 V5 provider picker upgrade", CENTRAL_DIFF_V5_TO_V6, PICKER_DIFF_V5_TO_V6),
-    ("ChatGPT 26.721 V4 safety upgrade", CENTRAL_DIFF_V4_TO_V5, PICKER_DIFF_V4_TO_V5),
-    ("ChatGPT 26.721 provider-first picker", CENTRAL_DIFF_26721_V4, PICKER_DIFF_26721_V4),
+    ("ChatGPT 26.721 V6 provider cleanup upgrade", CENTRAL_DIFF_V6_TO_V7, PICKER_DIFF_V6_TO_V7),
+    ("ChatGPT 26.721 V5 provider cleanup upgrade", CENTRAL_DIFF_V5_TO_V7, PICKER_DIFF_V5_TO_V7),
+    ("ChatGPT 26.721 V4 provider cleanup upgrade", CENTRAL_DIFF_V4_TO_V7, PICKER_DIFF_V4_TO_V7),
+    ("ChatGPT 26.721 V7 provider-first picker", CENTRAL_DIFF_26721_V7, PICKER_DIFF_26721_V7),
 )
 
 
@@ -1552,10 +1556,11 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def ensure_provider_config(path: Path, overwrite: bool) -> str:
-    if overwrite or not path.exists() or path.stat().st_size == 0:
-        validate_provider_config(DEFAULT_PROVIDER_CONFIG)
-        atomic_write_json(path, DEFAULT_PROVIDER_CONFIG)
-        return "written"
+    if not path.exists() or path.stat().st_size == 0:
+        raise PatchError(
+            f"Provider routing config is missing: {path}. "
+            "Sync at least one enabled provider before patching the desktop app."
+        )
     try:
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)

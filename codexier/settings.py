@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,25 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "input_modalities": DEFAULT_INPUT_MODALITIES,
     "context_window": DEFAULT_CONTEXT_WINDOW,
     "auto_compact_token_limit": DEFAULT_AUTO_COMPACT_TOKEN_LIMIT,
+    "windows": {
+        "mode": "official",
+        "official_provider_id": None,
+        "portable_default_provider_id": None,
+    },
 }
+
+
+def _merged_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        key: copy.deepcopy(value)
+        for key, value in DEFAULT_SETTINGS.items()
+        if key != "windows"
+    }
+    result.update({key: value for key, value in settings.items() if key != "windows"})
+    result["windows"] = dict(DEFAULT_SETTINGS["windows"])
+    if isinstance(settings.get("windows"), dict):
+        result["windows"].update(settings["windows"])
+    return result
 
 
 def settings_path(provider_catalog: Path) -> Path:
@@ -30,16 +49,16 @@ def load_settings(provider_catalog: Path) -> dict[str, Any]:
     path = settings_path(provider_catalog)
     if not path.exists():
         save_settings(provider_catalog, DEFAULT_SETTINGS)
-        return dict(DEFAULT_SETTINGS)
+        return _merged_settings(DEFAULT_SETTINGS)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ConfigError(f"Could not read settings file: {path}") from exc
     if not isinstance(data, dict):
         raise ConfigError("Settings file must contain a JSON object.")
-    result = dict(DEFAULT_SETTINGS)
-    result.update(data)
+    result = _merged_settings(data)
     validate_context_settings(result)
+    validate_windows_settings(result)
     return result
 
 
@@ -60,8 +79,22 @@ def validate_context_settings(settings: dict[str, Any]) -> None:
         raise ConfigError("Context compacting limit must be a positive integer below maximum context.")
 
 
+def validate_windows_settings(settings: dict[str, Any]) -> None:
+    windows = settings.get("windows")
+    if not isinstance(windows, dict):
+        raise ConfigError("Windows settings must contain a JSON object.")
+    if windows.get("mode") not in {"official", "portable"}:
+        raise ConfigError("Windows mode must be 'official' or 'portable'.")
+    for key in ("official_provider_id", "portable_default_provider_id"):
+        value = windows.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ConfigError(f"Windows setting {key} must be a provider id or null.")
+
+
 def save_settings(provider_catalog: Path, settings: dict[str, Any]) -> Path:
+    settings = _merged_settings(settings)
     validate_context_settings(settings)
+    validate_windows_settings(settings)
     path = settings_path(provider_catalog)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")

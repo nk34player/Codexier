@@ -32,7 +32,11 @@ from .desktop_patch_macos import (
     validate_provider_config,
 )
 from .patch_progress import PatchProgress, report
-from .process_manager import ChatGPTProcess, detect_chatgpt_processes
+from .process_manager import (
+    ChatGPTProcess,
+    detect_chatgpt_processes,
+    gracefully_close_chatgpt_processes,
+)
 
 
 @dataclass(frozen=True)
@@ -79,52 +83,10 @@ def _gracefully_close_target_processes(
     if not processes:
         return None
     executable = processes[0].executable
-    for process in processes:
-        try:
-            subprocess.run(
-                [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    (
-                        f"$p = Get-Process -Id {process.pid} "
-                        "-ErrorAction SilentlyContinue; "
-                        "if ($null -ne $p) { [void]$p.CloseMainWindow() }"
-                    ),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except OSError as exc:
-            raise PatchSkipped(
-                f"Desktop patch skipped: could not request a graceful app close ({exc}). "
-                "Close ChatGPT manually, then sync enabled providers again."
-            ) from exc
-    deadline = time.monotonic() + 8.0
-    pending = {process.pid for process in processes}
-    while pending and time.monotonic() < deadline:
-        try:
-            result = subprocess.run(
-                ["tasklist.exe", "/NH"],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-        except OSError as exc:
-            raise PatchSkipped(
-                f"Desktop patch skipped: could not verify the app closed ({exc}). "
-                "Close ChatGPT manually, then sync enabled providers again."
-            ) from exc
-        pending = {pid for pid in pending if str(pid) in result.stdout}
-        if pending:
-            time.sleep(0.1)
-    if pending:
-        ids = ", ".join(str(pid) for pid in sorted(pending))
+    result = gracefully_close_chatgpt_processes(processes)
+    if not result.closed:
         raise PatchSkipped(
-            "Desktop patch skipped: ChatGPT is still running "
-            f"(PIDs: {ids}). Close it normally, then sync enabled providers again."
+            f"Desktop patch skipped: {result.message}"
         )
     return executable
 
@@ -164,6 +126,9 @@ def patch_windows_app(
     config: Path,
     backup_root: Path,
     progress: PatchProgress | None = None,
+    *,
+    require_running: bool = True,
+    restart: bool = True,
 ) -> WindowsPatchResult:
     """Patch a verified unpackaged archive and recover automatically on error."""
     if not archive.is_file():
@@ -181,8 +146,18 @@ def patch_windows_app(
     if shutil.which("npx.cmd") is None and shutil.which("npx") is None:
         raise PatchError("npx is required. Install Node.js, then run this command again.")
 
-    report(progress, "process stop", "requesting a graceful close of the desktop app")
-    executable = _gracefully_close_target_processes(_target_processes(archive))
+    processes = _target_processes(archive)
+    if require_running and not processes:
+        raise PatchSkipped(
+            "Desktop patch skipped: the validated ChatGPT or Codex runtime is no "
+            "longer running. Reopen the unpackaged app, then sync enabled providers again."
+        )
+    executable = None
+    if processes:
+        report(progress, "process stop", "requesting a graceful close of the desktop app")
+        executable = _gracefully_close_target_processes(processes)
+    else:
+        report(progress, "process stop", "portable app is not running")
     report(progress, "backup", "creating a verified backup of app.asar")
     backup = _make_backup(archive, backup_root)
     try:
@@ -246,7 +221,7 @@ def patch_windows_app(
 
     restarted = False
     report(progress, "restart", "reopening the desktop app when it was previously running")
-    if executable:
+    if restart and executable:
         try:
             subprocess.Popen([executable])
             restarted = True
