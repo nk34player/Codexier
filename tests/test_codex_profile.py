@@ -52,6 +52,9 @@ def test_apply_codex_profile_writes_proxyagent_style_files(tmp_path: Path):
     parsed = tomllib.loads(config.read_text())
     assert parsed["model"] == "gpt-5.2"
     assert parsed["model_provider"] == "codexier"
+    assert parsed["model_context_window"] == 250000
+    assert parsed["model_auto_compact_token_limit"] == 70000
+    assert parsed["model_auto_compact_token_limit_scope"] == "total"
     assert parsed["model_catalog_json"] == str(codex_home / "codexier.models.json")
     assert parsed["other"]["value"] is True
     assert parsed["model_providers"]["codexier"]["base_url"] == "https://demo.example/v1/"
@@ -62,6 +65,28 @@ def test_apply_codex_profile_writes_proxyagent_style_files(tmp_path: Path):
     assert (codex_home / "codexier.models.json").exists()
     assert json.loads((codex_home / "codexier.models.json").read_text())["default_model"] == "gpt-5.2"
     assert result.config_path == config
+    profile = tomllib.loads(result.profile_path.read_text())
+    assert profile["model_context_window"] == 250000
+    assert profile["model_auto_compact_token_limit"] == 70000
+
+
+def test_apply_codex_profile_writes_custom_context_limits(tmp_path: Path):
+    codex_home = tmp_path / ".codex"
+    result = apply_codex_profile(
+        provider(),
+        codex_home,
+        {"context_window": 200000, "auto_compact_token_limit": 60000},
+    )
+
+    config = tomllib.loads(result.config_path.read_text())
+    profile = tomllib.loads(result.profile_path.read_text())
+    catalog = json.loads(result.catalog_path.read_text())
+    assert config["model_context_window"] == 200000
+    assert config["model_auto_compact_token_limit"] == 60000
+    assert profile["model_context_window"] == 200000
+    assert profile["model_auto_compact_token_limit"] == 60000
+    assert all(model["context_window"] == 200000 for model in catalog["models"])
+    assert all(model["auto_compact_token_limit"] == 60000 for model in catalog["models"])
 
 
 def test_applied_provider_is_read_from_codex_config(tmp_path: Path):

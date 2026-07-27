@@ -146,12 +146,21 @@ def build_catalog(provider: Provider, settings: dict[str, Any] | None = None) ->
     }
 
 
-def _merge_profile(data: dict[str, Any], provider: Provider, catalog_path: Path) -> dict[str, Any]:
+def _merge_profile(
+    data: dict[str, Any],
+    provider: Provider,
+    catalog_path: Path,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     result = copy.deepcopy(data)
+    context_window, compact_limit = _context_limits(settings or {})
     result["model"] = provider.models[0].id
     result["model_provider"] = "codexier"
     result["codexier_provider_id"] = provider.id
     result["model_reasoning_effort"] = "medium"
+    result["model_context_window"] = context_window
+    result["model_auto_compact_token_limit"] = compact_limit
+    result["model_auto_compact_token_limit_scope"] = "total"
     result["tool_output_token_limit"] = 8000
     result["model_catalog_json"] = str(catalog_path.resolve())
     providers = result.setdefault("model_providers", {})
@@ -168,6 +177,9 @@ def _merge_profile(data: dict[str, Any], provider: Provider, catalog_path: Path)
         "name": "Codexier",
         "model": provider.models[0].id,
         "model_provider": "codexier",
+        "model_context_window": context_window,
+        "model_auto_compact_token_limit": compact_limit,
+        "model_auto_compact_token_limit_scope": "total",
         "tool_output_token_limit": 8000,
         "model_catalog_json": str(catalog_path.resolve()),
     }
@@ -194,11 +206,15 @@ def apply_codex_profile(provider: Provider, home: Path | None = None, settings: 
     catalog["model_catalog_json"] = str(catalog_path.resolve())
     catalog["updated_at"] = datetime.now(timezone.utc).isoformat()
     atomic_write(catalog_path, (json.dumps(catalog, indent=2) + "\n").encode(), mode=0o600)
-    merged = _merge_profile(data, provider, catalog_path)
+    merged = _merge_profile(data, provider, catalog_path, settings)
     atomic_write(config_path, tomli_w.dumps(merged).encode(), mode=0o600)
+    context_window, compact_limit = _context_limits(settings or {})
     profile = {
         "model": provider.models[0].id,
         "model_provider": "codexier",
+        "model_context_window": context_window,
+        "model_auto_compact_token_limit": compact_limit,
+        "model_auto_compact_token_limit_scope": "total",
         "model_catalog_json": str(catalog_path.resolve()),
         "tool_output_token_limit": 8000,
     }
