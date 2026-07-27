@@ -25,6 +25,7 @@ from textual.widgets import (
     Static,
     TabbedContent,
     TabPane,
+    Tabs,
 )
 
 from .backup import atomic_write
@@ -665,7 +666,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
 
 
 class WindowsProviderListView(ListView):
-    """Keep arrow-key navigation inside the active Windows desktop tab."""
+    """Move between the Portable provider list, actions, and tabs."""
 
     def action_cursor_down(self) -> None:
         if self.index is not None and self.index < len(self.children) - 1:
@@ -676,6 +677,8 @@ class WindowsProviderListView(ListView):
     def action_cursor_up(self) -> None:
         if self.index not in (None, 0):
             super().action_cursor_up()
+        else:
+            self.screen._focus_windows_tabs()  # type: ignore[attr-defined]
 
 
 class WindowsProgressScreen(ModalScreen[None]):
@@ -739,6 +742,10 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     #shell { width: 98%; height: 1fr; margin: 1; padding: 1 2; border: round #3b82f6; background: #131d38; }
     TabbedContent { height: 1fr; }
     TabPane { padding: 1 2; }
+    .official-layout { height: 1fr; min-height: 10; }
+    .official-info { width: 2fr; padding: 1 2; border: round #263b68; background: #0f1730; }
+    .official-selection { width: 1fr; margin-left: 1; padding: 1 2; border: round #3b82f6; background: #101b36; }
+    .section-title { color: #8be9fd; text-style: bold; }
     .provider-list { height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; }
     .provider-list > ListItem { min-height: 3; padding: 1 2; }
     .actions { height: auto; min-height: 4; margin-top: 1; }
@@ -772,14 +779,22 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             yield Static("WINDOWS DESKTOP APPS  /  SHARED LOWERCASE codexier PROFILE")
             with TabbedContent(initial=self.initial_tab):
                 with TabPane("Official Codex App", id="official-tab"):
-                    yield Static(
-                        "The signed Microsoft Store package stays untouched. "
-                        "Choose one enabled custom provider for this mode."
-                    )
-                    yield WindowsProviderListView(id="official-providers", classes="provider-list")
+                    with Horizontal(classes="official-layout"):
+                        with Vertical(classes="official-info"):
+                            yield Static("OFFICIAL APP", classes="section-title")
+                            yield Static(
+                                "Loading official app information …",
+                                id="official-app-info",
+                            )
+                        with Vertical(classes="official-selection"):
+                            yield Static("CURRENT CONFIGURATION", classes="section-title")
+                            yield Static(
+                                "Loading selected configuration …",
+                                id="official-config-info",
+                            )
                     with Horizontal(classes="actions"):
                         yield Button(
-                            "Sync and launch official app",
+                            "Apply and launch official app",
                             id="official-sync",
                             variant="primary",
                         )
@@ -809,45 +824,70 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
             self.providers = ProviderStore(self.catalog_path).load()
         enabled = tuple(provider for provider in self.providers if provider.enabled)
-        for view_id, selection_key in (
-            ("official-providers", "official_provider_id"),
-            ("portable-providers", "portable_default_provider_id"),
-        ):
-            view = self.query_one(f"#{view_id}", ListView)
-            for provider in enabled:
-                await view.append(
-                    ListItem(
-                        Label(f"◆  {provider.name} · {len(provider.models)} models"),
-                        id=widget_id(view_id, provider.id),
-                    )
+        view = self.query_one("#portable-providers", ListView)
+        for provider in enabled:
+            await view.append(
+                ListItem(
+                    Label(f"◆  {provider.name} · {len(provider.models)} models"),
+                    id=widget_id("portable-providers", provider.id),
                 )
-            selected_id = self.settings["windows"].get(selection_key)
-            view.index = next(
-                (
-                    index
-                    for index, provider in enumerate(enabled)
-                    if provider.id == selected_id
-                ),
-                0 if enabled else None,
             )
-        self.call_after_refresh(self._focus_active_provider_list)
+        selected_id = self.settings["windows"].get("portable_default_provider_id")
+        view.index = next(
+            (
+                index
+                for index, provider in enumerate(enabled)
+                if provider.id == selected_id
+            ),
+            0 if enabled else None,
+        )
+        self.call_after_refresh(self._focus_windows_tabs)
         self.run_worker(self._load_status(), exclusive=True)
 
     async def _load_status(self) -> None:
         status = self.query_one("#windows-status", Static)
+        selected = self._official_selected_provider()
+        self.query_one("#official-config-info", Static).update(
+            "Profile     codexier (displayed as Codexier)\n"
+            "Mode        One enabled provider\n"
+            + (
+                f"Provider    {selected.name}\n"
+                f"Models      {len(selected.models)}"
+                if selected is not None
+                else "Provider    Not applied yet\n"
+                "Choose a provider on the main screen, then apply it here."
+            )
+        )
         try:
             from .windows_portable import discover_official_package, portable_status
 
             package = await asyncio.to_thread(discover_official_package)
             portable = portable_status(package)
+            self.query_one("#official-app-info", Static).update(
+                f"Version     {package.version}\n"
+                "Type        Signed Microsoft Store/MSIX package\n"
+                f"Path        {package.install_location}\n"
+                f"Executable  {package.executable}\n"
+                f"App ID      {package.aumid}"
+            )
             status.update(
-                f"Official package  {package.version} · {package.aumid}\n"
                 f"Portable path     {portable.root}\n"
                 f"Portable state    {portable.message}"
             )
         except (ConfigError, OSError) as exc:
             status.update(str(exc))
             status.add_class("error")
+
+    def _official_selected_provider(self) -> Provider | None:
+        selected_id = self.settings["windows"].get("official_provider_id")
+        return next(
+            (
+                provider
+                for provider in self.providers
+                if provider.id == selected_id and provider.enabled
+            ),
+            None,
+        )
 
     def _selected_provider(self, view_id: str) -> Provider | None:
         item = self.query_one(f"#{view_id}", ListView).highlighted_child
@@ -862,29 +902,37 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             None,
         )
 
-    def _active_view_id(self) -> str:
-        active = self.query_one(TabbedContent).active
-        return "official-providers" if active == "official-tab" else "portable-providers"
-
     def _active_windows_actions(self) -> tuple[Button, ...]:
-        if self._active_view_id() == "official-providers":
+        if self.query_one(TabbedContent).active == "official-tab":
             ids = ("official-sync", "back")
         else:
             ids = ("portable-create", "portable-refresh", "portable-repair", "portable-sync", "back")
         return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
 
-    def _focus_active_provider_list(self) -> None:
-        self.query_one(f"#{self._active_view_id()}", ListView).focus()
+    def _focus_windows_tabs(self) -> None:
+        self.query_one(TabbedContent).query_one(Tabs).focus()
+
+    def _focus_active_content(self) -> None:
+        if self.query_one(TabbedContent).active == "portable-tab":
+            view = self.query_one("#portable-providers", ListView)
+            if view.children:
+                view.focus()
+                return
+        self._active_windows_actions()[0].focus()
 
     def _focus_first_windows_action(self) -> None:
         self._active_windows_actions()[0].focus()
 
     @on(TabbedContent.TabActivated)
     def _on_windows_tab_activated(self, _: TabbedContent.TabActivated) -> None:
-        self.call_after_refresh(self._focus_active_provider_list)
+        self.call_after_refresh(self._focus_windows_tabs)
 
     def on_key(self, event: events.Key) -> None:
-        if event.key not in {"up", "down"} or not isinstance(self.focused, Button):
+        if event.key == "down" and isinstance(self.focused, Tabs):
+            self._focus_active_content()
+            event.stop()
+            return
+        if event.key not in {"up", "down", "left", "right"} or not isinstance(self.focused, Button):
             return
         buttons = self._active_windows_actions()
         try:
@@ -892,8 +940,18 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         except ValueError:
             return
         if event.key == "up":
-            (self.query_one(f"#{self._active_view_id()}", ListView) if index == 0 else buttons[index - 1]).focus()
-        elif index < len(buttons) - 1:
+            if index == 0:
+                if self.query_one(TabbedContent).active == "portable-tab":
+                    self.query_one("#portable-providers", ListView).focus()
+                else:
+                    self._focus_windows_tabs()
+            else:
+                buttons[index - 1].focus()
+        elif event.key == "down" and index < len(buttons) - 1:
+            buttons[index + 1].focus()
+        elif event.key == "left" and index > 0:
+            buttons[index - 1].focus()
+        elif event.key == "right" and index < len(buttons) - 1:
             buttons[index + 1].focus()
         event.stop()
 
@@ -937,10 +995,19 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
     async def _run_action(self, action: str) -> None:
         status = self.query_one("#windows-status", Static)
-        view_id = "official-providers" if action == "official-sync" else "portable-providers"
-        selected = None if action == "portable-refresh" else self._selected_provider(view_id)
+        selected = (
+            self._official_selected_provider()
+            if action == "official-sync"
+            else None
+            if action == "portable-refresh"
+            else self._selected_provider("portable-providers")
+        )
         if action != "portable-refresh" and selected is None:
-            status.update("Enable and select a provider first.")
+            status.update(
+                "Apply a provider from the main screen first."
+                if action == "official-sync"
+                else "Enable and select a provider first."
+            )
             status.add_class("error")
             return
         self.progress_screen = WindowsProgressScreen(self._action_title(action))

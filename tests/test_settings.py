@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 
 from textual.app import App
-from textual.widgets import Button, Label, ListItem, ListView, RichLog
+from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TabbedContent, Tabs
 
 from codexier.models import ModelDefinition, Provider
 from codexier.settings import DEFAULT_SETTINGS, MAX_CONTEXT_WINDOW, load_settings, save_settings
@@ -59,14 +59,14 @@ def test_windows_settings_screen_exposes_official_and_portable_actions(tmp_path:
     )
     assert "Official Codex App" in copy
     assert "Portable App" in copy
-    assert "Sync and launch official app" in copy
+    assert "Apply and launch official app" in copy
     assert "Create portable app" in copy
     assert "Refresh portable status" in copy
     assert "Repair patch" in copy
     assert "Sync and launch portable app" in copy
 
 
-def test_portable_screen_uses_arrow_keys_for_lists_and_buttons(tmp_path: Path):
+def test_windows_tabs_and_portable_controls_use_arrow_keys(tmp_path: Path):
     async def scenario() -> None:
         provider = Provider(
             "example",
@@ -84,14 +84,55 @@ def test_portable_screen_uses_arrow_keys_for_lists_and_buttons(tmp_path: Path):
             )
             app.push_screen(screen)
             await pilot.pause()
+            tabs = screen.query_one(TabbedContent).query_one(Tabs)
             view = screen.query_one("#portable-providers", ListView)
+            assert app.focused is tabs
+            await pilot.press("left")
+            assert screen.query_one(TabbedContent).active == "official-tab"
+            await pilot.press("right")
+            assert screen.query_one(TabbedContent).active == "portable-tab"
+            await pilot.press("down")
             assert app.focused is view
             await pilot.press("down")
             assert app.focused is screen.query_one("#portable-create", Button)
-            await pilot.press("down")
+            await pilot.press("right")
             assert app.focused is screen.query_one("#portable-refresh", Button)
             await pilot.press("up")
             assert app.focused is screen.query_one("#portable-create", Button)
+            await pilot.press("up")
+            assert app.focused is view
+            await pilot.press("up")
+            assert app.focused is tabs
+
+    asyncio.run(scenario())
+
+
+def test_official_tab_shows_app_and_selected_configuration_without_provider_list(tmp_path: Path):
+    async def scenario() -> None:
+        provider = Provider(
+            "example",
+            "Example",
+            "https://example.test/v1",
+            "key",
+            (ModelDefinition("example-model", "Example Model"),),
+            {},
+            True,
+        )
+        app = App()
+        async with app.run_test() as pilot:
+            screen = WindowsDesktopScreen(
+                tmp_path / "providers.json", (provider,), initial_tab="official"
+            )
+            app.push_screen(screen)
+            await pilot.pause()
+            tabs = screen.query_one(TabbedContent).query_one(Tabs)
+            assert app.focused is tabs
+            assert isinstance(screen.query_one("#official-app-info", Static), Static)
+            assert isinstance(screen.query_one("#official-config-info", Static), Static)
+            await pilot.press("down")
+            assert app.focused is screen.query_one("#official-sync", Button)
+            await pilot.press("up")
+            assert app.focused is tabs
 
     asyncio.run(scenario())
 
