@@ -47,7 +47,6 @@ LEGACY_PATCH_MARKERS = (
     b"__codexDesktopModelProvidersPatchV6",
 )
 ASAR_PACKAGE = "@electron/asar@3.2.10"
-PRETTIER_PACKAGE = "prettier@3.6.2"
 
 CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
    if (`data` in e) return e;
@@ -1795,6 +1794,65 @@ def parse_hunks(unified_diff: str) -> list[list[str]]:
     return hunks
 
 
+def _compact_javascript(source: str) -> tuple[str, list[int]]:
+    """Remove layout outside literals while retaining source offsets.
+
+    This is deliberately not a JavaScript parser. It only makes exact patch
+    hunks resilient to minified-versus-formatted layout, without loading an
+    entire Electron bundle into Prettier's JavaScript AST.
+    """
+    compact: list[str] = []
+    positions: list[int] = []
+    index = 0
+    quote: str | None = None
+    while index < len(source):
+        character = source[index]
+        if quote is not None:
+            compact.append(character)
+            positions.append(index)
+            if character == "\\" and index + 1 < len(source):
+                index += 1
+                compact.append(source[index])
+                positions.append(index)
+            elif character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {"'", '"', "`"}:
+            quote = character
+        elif character.isspace():
+            index += 1
+            continue
+        compact.append(character)
+        positions.append(index)
+        index += 1
+    return "".join(compact), positions
+
+
+def _render_layout_independent_hunk(
+    source: str,
+    old_lines: list[str],
+    new_lines: list[str],
+    source_name: str,
+    hunk_number: int,
+) -> str:
+    old_compact, _ = _compact_javascript("\n".join(old_lines))
+    source_compact, offsets = _compact_javascript(source)
+    matches: list[int] = []
+    start = 0
+    while (index := source_compact.find(old_compact, start)) != -1:
+        matches.append(index)
+        start = index + 1
+    if len(matches) != 1:
+        raise PatchError(
+            f"{source_name}: hunk {hunk_number} matched {len(matches)} times; "
+            "the app build is unsupported or already modified"
+        )
+    first = offsets[matches[0]]
+    last = offsets[matches[0] + len(old_compact) - 1] + 1
+    return source[:first] + "\n".join(new_lines) + source[last:]
+
+
 def render_unified_diff(source: str, unified_diff: str, source_name: str) -> str:
     had_trailing_newline = source.endswith("\n")
     source_lines = source.splitlines()
@@ -1809,10 +1867,16 @@ def render_unified_diff(source: str, unified_diff: str, source_name: str) -> str
             if source_lines[index : index + len(old_lines)] == old_lines
         ]
         if len(matches) != 1:
-            raise PatchError(
-                f"{source_name}: hunk {hunk_number} matched {len(matches)} times; "
-                "the app build is unsupported or already modified"
+            source = _render_layout_independent_hunk(
+                "\n".join(source_lines) + ("\n" if had_trailing_newline else ""),
+                old_lines,
+                new_lines,
+                source_name,
+                hunk_number,
             )
+            source_lines = source.splitlines()
+            search_start = 0
+            continue
         index = matches[0]
         source_lines[index : index + len(old_lines)] = new_lines
         search_start = index + len(new_lines)
@@ -2060,19 +2124,7 @@ def patch_app(
             "model picker",
         )
 
-        patch_targets = list(dict.fromkeys((central, picker)))
-
         report(progress, "source patch", "applying provider-first model routing")
-        run(
-            [
-                "npx",
-                "--yes",
-                PRETTIER_PACKAGE,
-                "--write",
-                *(str(path) for path in patch_targets),
-            ],
-            label="Preparing the JavaScript bundles",
-        )
         patch_layout = apply_supported_patch_variant(central, picker)
         terminal_status(
             "LAYOUT",
@@ -2087,16 +2139,6 @@ def patch_app(
             raise PatchError("Provider picker missing after patch")
 
         report(progress, "repack", "repacking the patched application archive")
-        run(
-            [
-                "npx",
-                "--yes",
-                PRETTIER_PACKAGE,
-                "--write",
-                *(str(path) for path in patch_targets),
-            ],
-            label="Formatting and validating the patched JavaScript",
-        )
         run(
             ["npx", "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_asar)],
             label="Packing patched application resources",

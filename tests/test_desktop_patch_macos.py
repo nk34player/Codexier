@@ -167,6 +167,20 @@ def test_missing_provider_config_is_not_replaced_with_examples(tmp_path: Path):
     assert not config.exists()
 
 
+def test_patch_hunks_match_minified_javascript_without_prettier():
+    source = "function increment(e){return e;}"
+    diff = """@@ -1,3 +1,3 @@
+ function increment(e) {
+-  return e;
++  return e + 1;
+ }
+"""
+
+    patched = render_unified_diff(source, diff, "bundle.js")
+
+    assert "return e + 1;" in patched
+
+
 def test_failed_patch_command_names_the_stage_when_it_has_no_output(monkeypatch):
     monkeypatch.setattr(
         "codexier.desktop_patch_macos.subprocess.run",

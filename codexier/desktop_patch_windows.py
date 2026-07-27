@@ -21,7 +21,6 @@ from pathlib import Path
 from .desktop_patch_macos import (
     ASAR_PACKAGE,
     PATCH_MARKER,
-    PRETTIER_PACKAGE,
     PatchError,
     PatchSkipped,
     apply_supported_patch_variant,
@@ -186,21 +185,10 @@ def patch_windows_app(
                 ("composer.intelligenceDropdown.tooltip", "modelOptionsDisabled"),
                 "model picker",
             )
-            patch_targets = list(dict.fromkeys((central, picker)))
             report(progress, "source patch", "applying provider-first model routing")
-            run(
-                [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
-                label="Preparing the JavaScript bundles",
-                terminal=False,
-            )
             apply_supported_patch_variant(central, picker)
             if PATCH_MARKER.decode() not in central.read_text(encoding="utf-8"):
                 raise PatchError("Routing marker missing after patch.")
-            run(
-                [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
-                label="Formatting patched JavaScript",
-                terminal=False,
-            )
             report(progress, "repack", "repacking the patched application archive")
             run(
                 [npx, "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_archive)],
