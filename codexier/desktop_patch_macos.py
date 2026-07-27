@@ -1954,7 +1954,9 @@ def _apply_codex_26721_4979_layout(source: str) -> str:
     source = _replace_once(
         source,
         CODEX_26721_4979_MODELS_ANCHOR,
-        CODEX_26721_4979_MODELS_ANCHOR.replace("}=e,", "}=e,p=codexUseProviderModels(p),"),
+        CODEX_26721_4979_MODELS_ANCHOR.replace(
+            "}=e,P=m", "}=e;p=codexUseProviderModels(p);let P=m"
+        ),
         layout,
     )
     source = _replace_once(

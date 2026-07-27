@@ -144,6 +144,9 @@ def patch_windows_app(
     asar_header_hash(archive)
     if shutil.which("npx.cmd") is None and shutil.which("npx") is None:
         raise PatchError("npx is required. Install Node.js, then run this command again.")
+    node = shutil.which("node.exe") or shutil.which("node")
+    if node is None:
+        raise PatchError("Node.js is required. Install Node.js, then run this command again.")
 
     processes = _target_processes(archive)
     if require_running and not processes:
@@ -191,6 +194,12 @@ def patch_windows_app(
                 raise PatchError("Routing marker missing after patch.")
             if "CodexCustomProviderPickerSection" not in picker.read_text(encoding="utf-8"):
                 raise PatchError("Provider picker missing after patch.")
+            for bundle in {central, picker}:
+                run(
+                    [node, "--check", str(bundle)],
+                    label="Validating patched JavaScript",
+                    terminal=False,
+                )
             report(progress, "repack", "repacking the patched application archive")
             run(
                 [npx, "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_archive)],

@@ -16,6 +16,7 @@ from codexier.models import ModelDefinition, Provider
 from codexier.process_manager import ChatGPTProcess, CloseResult
 from codexier.windows_portable import (
     OfficialPackage,
+    PORTABLE_PATCH_VERSION,
     _default_health_check,
     _portable_paths,
     discover_official_package,
@@ -75,6 +76,24 @@ def package_fixture(
 def patch_staged(archive: Path, *_args, **_kwargs) -> object:
     archive.write_bytes(archive.read_bytes() + PATCH_MARKER)
     return object()
+
+
+def test_portable_launch_disables_app_updates(tmp_path: Path, monkeypatch):
+    import codexier.windows_portable as portable
+
+    executable = tmp_path / "Codex.exe"
+    executable.write_bytes(b"portable-exe")
+    launched = {}
+    monkeypatch.setattr(
+        portable.subprocess,
+        "Popen",
+        lambda command, **kwargs: launched.update(command=command, env=kwargs["env"]),
+    )
+
+    portable._launch_portable(executable)
+
+    assert launched["command"] == [str(executable)]
+    assert launched["env"]["CODEX_SPARKLE_ENABLED"] == "false"
 
 
 def test_health_check_closes_only_the_launched_portable_process(tmp_path: Path, monkeypatch):
@@ -454,6 +473,7 @@ def test_portable_sync_exports_all_enabled_providers_and_launches_copy(
         "source_app_asar_hash": "different-is-an-update-only",
         "executable": "Codex.exe",
         "archive": "resources/app.asar",
+        "portable_patch_version": PORTABLE_PATCH_VERSION,
     }
     metadata_path = tmp_path / "Local/Codexier/portable-codex.json"
     metadata_path.parent.mkdir(parents=True, exist_ok=True)

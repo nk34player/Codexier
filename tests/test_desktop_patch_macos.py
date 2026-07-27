@@ -211,6 +211,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
     patched = bundle.read_text(encoding="utf-8")
     assert "__codexDesktopModelProvidersPatchV7" in patched
     assert "CodexCustomProviderPickerSection" in patched
+    assert "}=e;p=codexUseProviderModels(p);let P=m" in patched
     assert "t=await codexPatchAppServerParams(e,t)" in patched
     assert "e=await codexPatchAppServerParams(`thread/start`,e)" in patched
 
@@ -247,7 +248,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
             bundle = Path(command[-1]) / "webview" / "assets" / "app-initial.js"
             bundle.parent.mkdir(parents=True)
             bundle.write_text(source, encoding="utf-8")
-        else:
+        elif "--check" not in command:
             Path(command[-1]).write_bytes(
                 (Path(command[-2]) / "webview" / "assets" / "app-initial.js").read_bytes()
             )

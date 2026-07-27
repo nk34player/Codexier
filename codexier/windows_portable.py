@@ -37,7 +37,8 @@ from .process_manager import (
 from .settings import save_settings
 
 
-PORTABLE_PATCH_VERSION = PATCH_MARKER.decode().rsplit("V", 1)[-1]
+# Recreate portable payloads made before the startup syntax validation fix.
+PORTABLE_PATCH_VERSION = "8"
 PORTABLE_PROGRESS = {
     "detection": 5,
     "validation": 12,
@@ -330,7 +331,11 @@ def portable_status(
     except ConfigError as exc:
         return PortableStatus(root, False, False, None, None, False, None, None, str(exc))
     installed = executable.is_file() and archive.is_file()
-    patched = installed and contains_marker(archive)
+    patched = (
+        installed
+        and metadata.get("portable_patch_version") == PORTABLE_PATCH_VERSION
+        and contains_marker(archive)
+    )
     installed_version = str(metadata.get("package_version") or "") or None
     source_version = package.version if package else None
     update_available = bool(
@@ -345,7 +350,7 @@ def portable_status(
     elif update_available:
         message = "A newer or changed Store payload is available for manual refresh."
     elif not patched:
-        message = "Portable Codex is installed, but its provider-first patch needs repair."
+        message = "Portable Codex needs its current provider-first patch recreated."
     else:
         message = "Portable Codex is installed and patched."
     return PortableStatus(
@@ -400,6 +405,12 @@ def _restore_previous(
     _emit(progress, "rollback verification", "verified the restored portable installation")
 
 
+def _portable_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["CODEX_SPARKLE_ENABLED"] = "false"
+    return environment
+
+
 def _default_health_check(executable: Path) -> bool:
     try:
         process = subprocess.Popen(
@@ -407,6 +418,7 @@ def _default_health_check(executable: Path) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=_portable_environment(),
         )
         try:
             exit_code = process.wait(timeout=5)
@@ -449,7 +461,7 @@ def install_portable(
     _emit(progress, "detection", "discovering the installed OpenAI.Codex package")
     package = package or discover_official_package()
     status = portable_status(package, environ=environ)
-    if status.installed:
+    if status.patched:
         _emit(
             progress,
             "completion",
@@ -597,6 +609,13 @@ def repair_portable(
     status = portable_status(environ=environ)
     if not status.installed or status.archive is None:
         raise ConfigError("Create the portable app before repairing its patch.")
+    if not status.patched:
+        return install_portable(
+            config,
+            prepare_config=prepare_config,
+            environ=environ,
+            progress=progress,
+        )
     _emit(progress, "validation", "validated the portable executable and app.asar paths")
     _close_all_desktop_processes(
         progress,
@@ -650,7 +669,7 @@ def _launch_official(package: OfficialPackage) -> object:
 
 
 def _launch_portable(executable: Path) -> object:
-    return subprocess.Popen([str(executable)])
+    return subprocess.Popen([str(executable)], env=_portable_environment())
 
 
 def sync_and_launch_windows(
@@ -673,8 +692,8 @@ def sync_and_launch_windows(
         raise ConfigError("The selected Windows provider must be enabled.")
     package = discover_official_package()
     portable = portable_status(package, environ=environ)
-    if mode == "portable" and not portable.installed:
-        raise ConfigError("Create the portable app from Settings before launching Portable mode.")
+    if mode == "portable" and (not portable.installed or not portable.patched):
+        raise ConfigError("Repair the portable app from Settings before launching Portable mode.")
 
     _close_all_desktop_processes(
         progress,
