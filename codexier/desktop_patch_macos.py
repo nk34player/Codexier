@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import plistlib
-import pwd
 import re
 import shlex
 import shutil
@@ -27,6 +26,11 @@ import tempfile
 import textwrap
 import time
 from typing import Any, NoReturn
+
+try:
+    import pwd
+except ImportError:  # Windows imports the shared source-validation helpers.
+    pwd = None
 
 
 PATCH_MARKER = b"__codexDesktopModelProvidersPatchV4"
@@ -1411,7 +1415,7 @@ class FancyArgumentParser(argparse.ArgumentParser):
 
 def invoking_user_home() -> Path:
     sudo_user = os.environ.get("SUDO_USER")
-    if sudo_user and sudo_user != "root":
+    if sudo_user and sudo_user != "root" and pwd is not None:
         try:
             return Path(pwd.getpwnam(sudo_user).pw_dir)
         except KeyError:

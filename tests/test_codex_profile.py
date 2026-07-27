@@ -121,6 +121,36 @@ def test_applied_provider_id_reads_catalog_provider_identity(tmp_path: Path):
     assert applied_provider_id(config) == "demo"
 
 
+def test_legacy_default_resolves_from_normal_codexier_connection(tmp_path: Path):
+    from codexier.codex_profile import legacy_codexier_provider_id
+
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'model_provider = "codexier"\n'
+        '[model_providers.codexier]\n'
+        'base_url = "https://demo.example/v1/"\n'
+        'experimental_bearer_token = "secret"\n'
+    )
+    assert legacy_codexier_provider_id((provider(),), config) == "demo"
+
+
+def test_legacy_default_does_not_guess_when_connection_is_ambiguous(tmp_path: Path):
+    from codexier.codex_profile import legacy_codexier_provider_id
+
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'model_provider = "codexier"\n'
+        '[model_providers.codexier]\n'
+        'base_url = "https://demo.example/v1/"\n'
+        'experimental_bearer_token = "secret"\n'
+    )
+    duplicate = Provider(
+        "duplicate", "Duplicate", "https://demo.example/v1", "secret",
+        (ModelDefinition("other", "Other"),), {},
+    )
+    assert legacy_codexier_provider_id((provider(), duplicate), config) is None
+
+
 def test_profile_launch_command_is_explicit():
     from codexier.codex_profile import launch_command
 

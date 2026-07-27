@@ -11,6 +11,7 @@ from codexier.provider_store import (
     add_provider,
     create_provider_catalog,
     delete_provider,
+    migrate_legacy_enabled_provider,
     resolve_provider_path,
     set_provider_enabled,
     update_provider,
@@ -30,6 +31,41 @@ def test_load_catalog(tmp_path: Path):
     providers = ProviderStore(path).load()
     assert providers[0].models[0].label == "one"
     assert providers[0].enabled is False
+
+
+def test_legacy_toggle_migration_preserves_only_previous_default(tmp_path: Path):
+    path = tmp_path / "providers.json"
+    path.write_text(json.dumps({"version": 1, "providers": [
+        {
+            "id": "old", "name": "Old", "base_url": "https://old.example/v1",
+            "api_key": "old-key", "models": [{"id": "old-model"}], "presets": {},
+        },
+        {
+            "id": "active", "name": "Active", "base_url": "https://active.example/v1",
+            "api_key": "active-key", "models": [{"id": "active-model"}], "presets": {},
+        },
+    ]}))
+
+    result = migrate_legacy_enabled_provider(path, "active")
+
+    assert result.had_legacy_entries is True
+    assert result.enabled_provider_id == "active"
+    saved = json.loads(path.read_text())
+    assert [entry["enabled"] for entry in saved["providers"]] == [False, True]
+
+
+def test_legacy_toggle_migration_keeps_unknown_default_disabled(tmp_path: Path):
+    path = tmp_path / "providers.json"
+    path.write_text(json.dumps({"version": 1, "providers": [{
+        "id": "demo", "name": "Demo", "base_url": "https://demo.example/v1",
+        "api_key": "secret", "models": [{"id": "model"}], "presets": {},
+    }]}))
+
+    result = migrate_legacy_enabled_provider(path, None)
+
+    assert result.had_legacy_entries is True
+    assert result.enabled_provider_id is None
+    assert json.loads(path.read_text())["providers"][0]["enabled"] is False
 
 
 def test_missing_catalog_fails(tmp_path: Path):

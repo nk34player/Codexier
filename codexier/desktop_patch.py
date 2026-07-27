@@ -1,9 +1,8 @@
-"""Desktop-patch entry points.
+"""Desktop-patch entry points for verified native Electron installations.
 
-The macOS implementation is source-validated. Windows discovery, backup, and
-restore work with native paths, while mutation deliberately fails closed until
-a verified Windows Electron adapter exists. Microsoft Store/MSIX packages are
-never modified because their signatures cover the package payload.
+macOS and unpackaged Windows archives use source-validated adapters. Microsoft
+Store/MSIX packages are never modified because their signatures cover the
+package payload.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from pathlib import Path
 from .errors import ConfigError
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV3"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV4"
 
 
 @dataclass(frozen=True)
@@ -142,9 +141,8 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
     return DesktopPatchStatus(
         target,
         False,
-        False,
-        "Windows target detected, but no verified Windows patch adapter is "
-        "available; no changes were made.",
+        True,
+        "Unpackaged Windows Electron archive is ready for source validation.",
     )
 
 
@@ -170,7 +168,9 @@ def apply_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Deskto
         )
 
         app = target.archive_path.parents[2]
-        config = Path.home() / ".codex" / "desktop-model-providers.json"
+        from .codex_profile import codex_home
+
+        config = codex_home() / "desktop-model-providers.json"
         if not config.is_file():
             raise ConfigError("Apply a provider before installing the desktop patch.")
         try:
@@ -186,13 +186,19 @@ def apply_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Deskto
         if target.package_type == "msix":
             raise ConfigError(
                 "Windows Microsoft Store/MSIX packages are signed. Codexier "
-                "refuses to modify app.asar; use an unpackaged install when a "
-                "verified Windows patch adapter is available."
+                "refuses to modify app.asar; use an unpackaged desktop install."
             )
-        raise ConfigError(
-            "A Windows Electron target was found, but Codexier has no verified "
-            "Windows source layout/patch adapter yet. No files were changed."
-        )
+        from .codex_profile import codex_home
+        from .desktop_patch_windows import PatchError, patch_windows_app
+
+        config = codex_home() / "desktop-model-providers.json"
+        if not config.is_file():
+            raise ConfigError("Apply enabled providers before installing the desktop patch.")
+        try:
+            patch_windows_app(target.archive_path, config, backup_root)
+        except PatchError as exc:
+            raise ConfigError(str(exc)) from exc
+        return patch_status(target)
     if not status.supported:
         raise ConfigError(status.message)
     raise ConfigError(status.message)

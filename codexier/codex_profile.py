@@ -61,8 +61,8 @@ def codex_home(explicit: Path | None = None) -> Path:
     return Path(configured).expanduser() if configured else Path.home() / ".codex"
 
 
-def applied_provider_id(config_path: Path | None = None) -> str | None:
-    """Return model_provider from Codex config, if readable."""
+def _read_codex_config(config_path: Path | None = None) -> dict[str, Any] | None:
+    """Read a Codex TOML configuration without exposing its credentials."""
     path = config_path or (codex_home() / "config.toml")
     if not path.exists():
         return None
@@ -70,8 +70,54 @@ def applied_provider_id(config_path: Path | None = None) -> str | None:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
         return None
+    return data if isinstance(data, dict) else None
+
+
+def applied_provider_id(config_path: Path | None = None) -> str | None:
+    """Return the persisted Codexier fallback id, when one is available."""
+    data = _read_codex_config(config_path)
+    if data is None:
+        return None
     value = data.get("codexier_provider_id") or data.get("model_provider")
     return value if isinstance(value, str) and value.strip() else None
+
+
+def legacy_codexier_provider_id(
+    providers: tuple[Provider, ...], config_path: Path | None = None
+) -> str | None:
+    """Resolve a pre-routing Codexier connection to one saved provider.
+
+    Older Codexier configurations used ``model_provider = "codexier"`` but
+    did not retain a provider id.  Match the complete connection rather than
+    guessing from a model name, so a migration cannot enable the wrong API
+    account.  The credentials are compared in memory only and never logged.
+    """
+    data = _read_codex_config(config_path)
+    if data is None:
+        return None
+    saved_id = data.get("codexier_provider_id")
+    if isinstance(saved_id, str) and any(
+        provider.id == saved_id for provider in providers
+    ):
+        return saved_id
+    if data.get("model_provider") != "codexier":
+        return None
+    routes = data.get("model_providers")
+    route = routes.get("codexier") if isinstance(routes, dict) else None
+    if not isinstance(route, dict):
+        return None
+    base_url = route.get("base_url")
+    token = route.get("experimental_bearer_token") or route.get("api_key")
+    if not isinstance(base_url, str) or not isinstance(token, str):
+        return None
+    normalized_url = base_url.rstrip("/")
+    matches = [
+        provider
+        for provider in providers
+        if provider.base_url.rstrip("/") == normalized_url
+        and provider.api_key == token
+    ]
+    return matches[0].id if len(matches) == 1 else None
 
 
 def _catalog_model(provider: Provider, model_id: str, label: str, priority: int, settings: dict[str, Any] | None = None) -> dict[str, Any]:

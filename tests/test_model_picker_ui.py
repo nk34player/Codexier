@@ -46,7 +46,7 @@ def test_model_picker_keeps_every_saved_live_selection_without_a_cap():
     assert screen.selected == [model.id for model in models]
 
 
-def test_multi_provider_copy_describes_default_and_full_catalog_sync():
+def test_multi_provider_copy_describes_enabled_provider_sync():
     copy = "\n".join(
         constant
         for compose in (
@@ -57,8 +57,8 @@ def test_multi_provider_copy_describes_default_and_full_catalog_sync():
         for constant in compose.__code__.co_consts
         if isinstance(constant, str)
     )
-    assert "Set default & sync" in copy
-    assert "Sync all providers to Codex" in copy
+    assert "Sync enabled providers" in copy
+    assert "Codexier fallback" in copy
     assert "no selection limit" in copy
 
 
@@ -163,5 +163,33 @@ def test_enter_saves_provider_after_model_selection(tmp_path):
 
             saved = ProviderStore(catalog_path).get("demo")
             assert tuple(model.id for model in saved.models) == ("model-a",)
+
+    asyncio.run(scenario())
+
+
+def test_enabled_applied_fallback_is_preselected_and_opens_sync(tmp_path):
+    async def scenario() -> None:
+        fallback = Provider(
+            "fallback", "Fallback", "https://fallback.example/v1", "secret",
+            (ModelDefinition("model-a", "Model A"),), {},
+        )
+        other = Provider(
+            "other", "Other", "https://other.example/v1", "secret",
+            (ModelDefinition("model-b", "Model B"),), {},
+        )
+        catalog_path = tmp_path / "providers.json"
+        catalog_path.write_text(json.dumps({"version": 1, "providers": []}))
+        app = ProviderManagerApp(
+            catalog_path,
+            (other, fallback),
+            tmp_path / "config.toml",
+            applied_id="fallback",
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app._selected() == fallback
+            app.action_use()
+            await pilot.pause()
+            assert isinstance(app.screen, ApplyScreen)
 
     asyncio.run(scenario())

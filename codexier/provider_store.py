@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .errors import CatalogError
 from .models import ModelDefinition, Provider, validate_provider
+
+
+@dataclass(frozen=True)
+class LegacyEnableMigration:
+    """Outcome of the one-time opt-in synchronization migration."""
+
+    had_legacy_entries: bool
+    enabled_provider_id: str | None
 
 
 def resolve_provider_path(explicit: Path | None = None) -> Path:
@@ -161,6 +170,31 @@ def set_provider_enabled(path: Path, provider_id: str, enabled: bool) -> Provide
             _write_catalog(path, raw)
             return ProviderStore(path).get(provider_id)
     raise CatalogError(f"Unknown provider: {provider_id}")
+
+
+def migrate_legacy_enabled_provider(
+    path: Path, previous_default_id: str | None
+) -> LegacyEnableMigration:
+    """Persist only the previous Codexier fallback as enabled.
+
+    The provider toggle was introduced after catalogs had already been saved.
+    A missing ``enabled`` key must not silently export every saved credential,
+    but it also must not strand the user's active Codexier connection.
+    """
+    raw = _read_catalog(path)
+    legacy_entries = [
+        item for item in raw["providers"] if "enabled" not in item
+    ]
+    if not legacy_entries:
+        return LegacyEnableMigration(False, None)
+    known_ids = {str(item.get("id")) for item in legacy_entries}
+    for item in legacy_entries:
+        item["enabled"] = item.get("id") == previous_default_id
+    _write_catalog(path, raw)
+    return LegacyEnableMigration(
+        True,
+        previous_default_id if previous_default_id in known_ids else None,
+    )
 
 
 def secure_catalog(path: Path) -> None:

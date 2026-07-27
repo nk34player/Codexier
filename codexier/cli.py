@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import Sequence
 
 from .config_manager import detect_config_target, load_target
-from .codex_profile import apply_codex_profiles, launch_command
+from .codex_profile import (
+    apply_codex_profiles,
+    legacy_codexier_provider_id,
+    launch_command,
+)
 from .errors import CodexierError
 from .models import CodexSettings
 from .process_manager import (
@@ -15,7 +19,11 @@ from .process_manager import (
     restart_chatgpt,
     restart_codex,
 )
-from .provider_store import ProviderStore, resolve_provider_path
+from .provider_store import (
+    ProviderStore,
+    migrate_legacy_enabled_provider,
+    resolve_provider_path,
+)
 from .provider_store import create_provider_catalog
 from .setup_tui import run_provider_manager
 from .settings import load_settings
@@ -34,9 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--restart", action="store_true")
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--print-command", action="store_true",
-                        help="Print the selected default provider's Codex CLI command after syncing.")
+                        help="Print the normal Codexier CLI command after syncing.")
     parser.add_argument("--patch-desktop", action="store_true",
-                        help="Install the supported desktop provider-picker patch.")
+                        help="Install the provider-first desktop picker on macOS or unpackaged Windows.")
     parser.add_argument("--restore-desktop-patch", type=Path, metavar="BACKUP",
                         help="Restore a desktop patch backup and exit.")
     return parser
@@ -60,14 +68,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not catalog_path.exists():
             create_provider_catalog(catalog_path)
         while True:
-            providers = ProviderStore(catalog_path).load()
             target = detect_config_target(args.config)
             data, mapping = load_target(target)
             previous = target.adapter.read_settings(data, mapping)
+            providers = ProviderStore(catalog_path).load()
+            migrated = migrate_legacy_enabled_provider(
+                catalog_path, legacy_codexier_provider_id(providers, target.path)
+            )
+            if migrated.enabled_provider_id:
+                providers = ProviderStore(catalog_path).load()
+            migration_message = (
+                "Your previous Codexier fallback was kept enabled; other legacy "
+                "providers remain disabled."
+                if migrated.enabled_provider_id
+                else (
+                    "This catalog predates provider toggles. Enable the provider "
+                    "you want to sync, then select it."
+                    if migrated.had_legacy_entries
+                    else None
+                )
+            )
             provider = run_provider_manager(
                 catalog_path,
                 providers,
                 None if args.dry_run else target.path,
+                applied_id=legacy_codexier_provider_id(providers, target.path),
+                migration_message=migration_message,
             )
             if provider is None:
                 return 0

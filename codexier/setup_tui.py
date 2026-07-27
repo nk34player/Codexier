@@ -212,13 +212,26 @@ class ProviderManagerApp(App[Provider | None]):
         ("s", "settings", "Settings"),
     ]
 
-    def __init__(self, catalog_path, providers: tuple[Provider, ...], target_path=None):
+    def __init__(
+        self,
+        catalog_path,
+        providers: tuple[Provider, ...],
+        target_path=None,
+        *,
+        applied_id: str | None = None,
+        migration_message: str | None = None,
+    ):
         super().__init__()
         self.title = "Codexier"
         self.catalog_path = catalog_path
         self.providers = providers
         self.target_path = target_path
-        self.applied_id = applied_provider_id(target_path) if target_path else None
+        self.applied_id = (
+            applied_id
+            if applied_id is not None
+            else (applied_provider_id(target_path) if target_path else None)
+        )
+        self.migration_message = migration_message
         self.result: Provider | None = None
 
     def compose(self) -> ComposeResult:
@@ -226,12 +239,12 @@ class ProviderManagerApp(App[Provider | None]):
         with Vertical(id="shell"):
             yield Static(
                 "CODEXIER  /  PROVIDER CATALOG\n"
-                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier default.",
+                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier fallback.",
                 id="brand",
             )
             yield ProviderListView(id="providers")
             with Horizontal(id="actions"):
-                yield Button("Set default & sync enabled  ›", id="use", variant="primary")
+                yield Button("Sync enabled providers  ›", id="use", variant="primary")
                 yield Button("Toggle enabled", id="toggle")
                 yield Button("＋ Add provider", id="add")
                 yield Button("✎ Edit provider", id="edit")
@@ -245,8 +258,18 @@ class ProviderManagerApp(App[Provider | None]):
         view = self.query_one("#providers", ListView)
         view.focus()
         if self.providers:
-            view.index = 0
-            view.scroll_to(0, animate=False)
+            index = next(
+                (
+                    position
+                    for position, provider in enumerate(self.providers)
+                    if provider.id == self.applied_id
+                ),
+                0,
+            )
+            view.index = index
+            view.scroll_to(index, animate=False)
+            if self.migration_message:
+                self.query_one("#status", Static).update(self.migration_message)
 
     async def _render_providers(self) -> None:
         view = self.query_one("#providers", ListView)
@@ -296,7 +319,7 @@ class ProviderManagerApp(App[Provider | None]):
             status.update(f"{provider.name} is disabled. Toggle it on before syncing.")
         else:
             status.update(
-                f"Default after sync: {provider.name} · {len(provider.models)} models · "
+                f"Codexier fallback after sync: {provider.name} · {len(provider.models)} models · "
                 f"{sum(item.enabled for item in self.providers)} providers enabled"
             )
 
@@ -887,8 +910,17 @@ def run_provider_manager(
     catalog_path,
     providers: tuple[Provider, ...],
     target_path=None,
+    *,
+    applied_id: str | None = None,
+    migration_message: str | None = None,
 ) -> Provider | None:
-    return ProviderManagerApp(catalog_path, providers, target_path).run()
+    return ProviderManagerApp(
+        catalog_path,
+        providers,
+        target_path,
+        applied_id=applied_id,
+        migration_message=migration_message,
+    ).run()
 
 
 class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
@@ -918,21 +950,21 @@ class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
-            yield Static("SYNC CODEXIER PROVIDER CATALOG")
+            yield Static("SYNC ENABLED CODEXIER PROVIDERS")
             yield Static(
-                "Sync every saved OpenAI-compatible provider and model to Codex. "
-                "The selected provider becomes the default profile and desktop-picker provider.",
+                "Sync enabled OpenAI-compatible providers and their selected models. "
+                "Codexier keeps one normal profile; the selected provider is its fallback.",
                 id="intro",
             )
             yield Static(
-                f"Default provider  {self.provider.name}\n"
+                f"Codexier fallback  {self.provider.name}\n"
                 f"Base URL  {self.settings.base_url}\n"
                 f"API key   {mask_api_key(self.settings.api_key)}\n"
-                f"Default models    {', '.join(self.settings.models)}\n"
-                "Sync scope        All saved providers and models\n"
+                f"Fallback models    {', '.join(self.settings.models)}\n"
+                "Sync scope        Enabled providers and their selected models\n"
                 f"Target    {self.target_path}", id="summary"
             )
-            yield Button("Sync all providers to Codex  ›", id="apply", variant="primary")
+            yield Button("Sync enabled providers  ›", id="apply", variant="primary")
             yield Button("Back to provider catalog", id="cancel")
         yield Footer()
 

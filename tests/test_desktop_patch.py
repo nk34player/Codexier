@@ -44,7 +44,36 @@ def test_windows_unpacked_override_is_discovered_without_posix_path_assumptions(
     app = default_target("windows")
     assert app.archive_path == archive
     assert app.package_type == "unpackaged"
-    assert patch_status(app).supported is False
+    assert patch_status(app).supported is True
+
+
+def test_windows_unpacked_dispatches_verified_adapter(tmp_path: Path, monkeypatch):
+    archive = tmp_path / "ChatGPT" / "resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"original")
+    home = tmp_path / ".codex"
+    home.mkdir()
+    (home / "desktop-model-providers.json").write_text(
+        '{"version": 2, "default_provider": "openai", "providers": ['
+        '{"id": "openai", "label": "OpenAI", "description": "", "models": []}'
+        ']}'
+    )
+    monkeypatch.setenv("CODEX_HOME", str(home))
+
+    def fake_patch(path, config, backup_root):
+        assert path == archive
+        assert config == home / "desktop-model-providers.json"
+        assert backup_root == tmp_path / "backups"
+        path.write_bytes(PATCH_MARKER)
+
+    import codexier.desktop_patch_windows as windows
+
+    monkeypatch.setattr(windows, "patch_windows_app", fake_patch)
+    status = apply_desktop_patch(
+        DesktopPatchTarget("windows", archive, package_type="unpackaged"),
+        tmp_path / "backups",
+    )
+    assert status.patched
 
 
 def test_windows_msix_target_refuses_mutation_with_clear_message(tmp_path: Path):
