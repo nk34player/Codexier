@@ -3,13 +3,11 @@ import pytest
 from codexier.tui import SelectionState
 
 
-def test_selection_state_toggles_and_caps_at_five():
+def test_selection_state_toggles_without_a_model_cap():
     state = SelectionState(("a", "b", "c", "d", "e", "f"))
-    for model in ("a", "b", "c", "d", "e"):
+    for model in ("a", "b", "c", "d", "e", "f"):
         state.toggle(model)
-    with pytest.raises(ValueError, match="5"):
-        state.toggle("f")
-    assert state.selected == ("a", "b", "c", "d", "e")
+    assert state.selected == ("a", "b", "c", "d", "e", "f")
 
 
 def test_selection_state_hydrates_existing_selection():

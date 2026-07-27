@@ -26,6 +26,16 @@ def test_model_picker_handles_empty_model_data():
     assert screen.models == ()
 
 
+def test_model_picker_keeps_saved_live_selection():
+    screen = ModelPickerScreen(
+        (LiveModel("model-a", "Model A"), LiveModel("model-b", "Model B")),
+        "WawApi",
+        selected_ids=("model-b", "removed-model"),
+    )
+    assert screen.selected == ["model-b"]
+    assert "●" in screen._label("model-b")
+
+
 def _visible_actions(screen) -> set[str]:
     return {
         binding.action

@@ -31,6 +31,27 @@ class CodexProfileResult:
     config_path: Path
     catalog_path: Path
     profile_path: Path
+    desktop_config_path: Path | None = None
+
+
+def provider_profile_id(provider: Provider) -> str:
+    """Return a stable, TOML-safe Codex provider/profile identifier."""
+    safe = "".join(char if char.isalnum() or char in "_-" else "-" for char in provider.id)
+    return f"codexier-{safe.strip('-') or 'provider'}"
+
+
+def ensure_unique_model_ids(providers: tuple[Provider, ...]) -> None:
+    owners: dict[str, str] = {}
+    duplicates: set[str] = set()
+    for provider in providers:
+        for model in provider.models:
+            previous = owners.setdefault(model.id, provider.name)
+            if previous != provider.name:
+                duplicates.add(model.id)
+    if duplicates:
+        raise ConfigError(
+            "Model IDs must be unique across providers: " + ", ".join(sorted(duplicates))
+        )
 
 
 def launch_command(profile: str = "codexier") -> list[str]:
@@ -146,6 +167,65 @@ def build_catalog(provider: Provider, settings: dict[str, Any] | None = None) ->
     }
 
 
+def build_multi_catalog(
+    providers: tuple[Provider, ...],
+    selected_provider: Provider,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ensure_unique_model_ids(providers)
+    model_pairs = [
+        (provider, model)
+        for provider in providers
+        for model in provider.models
+    ]
+    models = [
+        _catalog_model(provider, model.id, model.label, priority, settings)
+        for priority, (provider, model) in enumerate(model_pairs, 1)
+    ]
+    if not models:
+        raise ConfigError("Select at least one model before applying providers.")
+    default = next(
+        model for model in models if model["slug"] == selected_provider.models[0].id
+    )
+    return {
+        "models": models,
+        "defaultModel": default,
+        "default_model": default["slug"],
+        "source": "local-codexier-model-catalog",
+    }
+
+
+def build_desktop_provider_config(
+    providers: tuple[Provider, ...], selected_provider: Provider
+) -> dict[str, Any]:
+    """Build config read by the supported desktop provider-menu patch."""
+    ensure_unique_model_ids(providers)
+    return {
+        "version": 1,
+        "default_provider": provider_profile_id(selected_provider),
+        "providers": [
+            {
+                "id": "openai",
+                "label": "ChatGPT / OpenAI",
+                "description": "Built-in provider; uses your signed-in ChatGPT account",
+            },
+            *[
+                {
+                    "id": provider_profile_id(provider),
+                    "label": provider.name,
+                    "description": f"Uses {provider.name} from Codexier",
+                }
+                for provider in providers
+            ],
+        ],
+        "model_providers": {
+            model.id: provider_profile_id(provider)
+            for provider in providers
+            for model in provider.models
+        },
+    }
+
+
 def _merge_profile(
     data: dict[str, Any],
     provider: Provider,
@@ -220,3 +300,80 @@ def apply_codex_profile(provider: Provider, home: Path | None = None, settings: 
     }
     atomic_write(profile_path, tomli_w.dumps(profile).encode(), mode=0o600)
     return CodexProfileResult(config_path, catalog_path, profile_path)
+
+
+def apply_codex_profiles(
+    providers: tuple[Provider, ...],
+    selected_provider: Provider,
+    home: Path | None = None,
+    settings: dict[str, Any] | None = None,
+) -> CodexProfileResult:
+    """Install every saved provider, with selected provider active by default."""
+    if not providers or selected_provider.id not in {provider.id for provider in providers}:
+        raise ConfigError("Selected provider is not in the saved provider catalog.")
+    if any(not provider.models for provider in providers):
+        raise ConfigError("Every saved provider must contain at least one selected model.")
+    ensure_unique_model_ids(providers)
+    root = codex_home(home)
+    root.mkdir(parents=True, exist_ok=True)
+    config_path = root / "config.toml"
+    catalog_path = root / "codexier.models.json"
+    profile_path = root / "codexier.config.toml"
+    desktop_config_path = root / "desktop-model-providers.json"
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"Could not parse Codex config: {config_path}") from exc
+
+    backup_config(config_path)
+    catalog = build_multi_catalog(providers, selected_provider, settings)
+    catalog["model_catalog_json"] = str(catalog_path.resolve())
+    catalog["updated_at"] = datetime.now(timezone.utc).isoformat()
+    atomic_write(catalog_path, (json.dumps(catalog, indent=2) + "\n").encode(), mode=0o600)
+
+    result = copy.deepcopy(data)
+    selected_id = provider_profile_id(selected_provider)
+    context_window, compact_limit = _context_limits(settings or {})
+    result.update(
+        {
+            "model": selected_provider.models[0].id,
+            "model_provider": selected_id,
+            "codexier_provider_id": selected_provider.id,
+            "model_reasoning_effort": "medium",
+            "model_context_window": context_window,
+            "model_auto_compact_token_limit": compact_limit,
+            "model_auto_compact_token_limit_scope": "total",
+            "tool_output_token_limit": 8000,
+            "model_catalog_json": str(catalog_path.resolve()),
+        }
+    )
+    provider_table = result.setdefault("model_providers", {})
+    profiles = result.setdefault("profiles", {})
+    for provider in providers:
+        profile_id = provider_profile_id(provider)
+        provider_table[profile_id] = {
+            "name": provider.name,
+            "base_url": provider.base_url.rstrip("/") + "/",
+            "wire_api": "responses",
+            "wire_specification": "responses",
+            "experimental_bearer_token": provider.api_key,
+            "requires_openai_auth": False,
+        }
+        profiles[profile_id] = {
+            "name": provider.name,
+            "model": provider.models[0].id,
+            "model_provider": profile_id,
+            "model_context_window": context_window,
+            "model_auto_compact_token_limit": compact_limit,
+            "model_auto_compact_token_limit_scope": "total",
+            "tool_output_token_limit": 8000,
+            "model_catalog_json": str(catalog_path.resolve()),
+        }
+    atomic_write(config_path, tomli_w.dumps(result).encode(), mode=0o600)
+    atomic_write(profile_path, tomli_w.dumps(profiles[selected_id]).encode(), mode=0o600)
+    atomic_write(
+        desktop_config_path,
+        (json.dumps(build_desktop_provider_config(providers, selected_provider), indent=2) + "\n").encode(),
+        mode=0o600,
+    )
+    return CodexProfileResult(config_path, catalog_path, profile_path, desktop_config_path)

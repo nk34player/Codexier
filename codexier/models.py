@@ -6,9 +6,6 @@ from urllib.parse import urlparse
 
 from .errors import ValidationError
 
-MAX_ACTIVE_MODELS = 5
-
-
 @dataclass(frozen=True)
 class ModelDefinition:
     id: str
@@ -51,8 +48,6 @@ def validate_provider(provider: Provider) -> None:
         raise ValidationError(f"Provider {provider.name!r} has invalid model IDs.")
     known = set(ids)
     for preset, selected in provider.presets.items():
-        if len(selected) > MAX_ACTIVE_MODELS:
-            raise ValidationError(f"Preset {preset!r} exceeds the five-model limit.")
         if len(selected) != len(set(selected)) or not set(selected) <= known:
             raise ValidationError(f"Preset {preset!r} references invalid models.")
 
@@ -61,8 +56,8 @@ def validate_settings(settings: CodexSettings) -> None:
     validate_base_url(settings.base_url)
     if not settings.api_key.strip():
         raise ValidationError("API key cannot be empty.")
-    if not 1 <= len(settings.models) <= MAX_ACTIVE_MODELS:
-        raise ValidationError("Select between 1 and 5 models.")
+    if not settings.models:
+        raise ValidationError("Select at least one model.")
     if any(not model.strip() for model in settings.models):
         raise ValidationError("Model IDs cannot be empty.")
     if len(settings.models) != len(set(settings.models)):
@@ -72,8 +67,8 @@ def validate_settings(settings: CodexSettings) -> None:
 def select_models(provider: Provider, model_ids: Sequence[str]) -> tuple[str, ...]:
     selected = tuple(model_ids)
     known = {model.id for model in provider.models}
-    if not 1 <= len(selected) <= MAX_ACTIVE_MODELS:
-        raise ValidationError("Select between 1 and 5 models.")
+    if not selected:
+        raise ValidationError("Select at least one model.")
     if len(selected) != len(set(selected)) or not set(selected) <= known:
         raise ValidationError("Selection contains unknown or duplicate models.")
     return selected

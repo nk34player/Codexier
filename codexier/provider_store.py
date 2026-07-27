@@ -45,7 +45,7 @@ def add_provider(path: Path, provider: Provider) -> None:
         "base_url": provider.base_url,
         "api_key": provider.api_key,
         "models": [{"id": model.id, "label": model.label} for model in provider.models],
-        "presets": {"default_top_5": [model.id for model in provider.models[:5]]},
+        "presets": {"default": [model.id for model in provider.models]},
     })
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
     path.chmod(0o600)
@@ -79,7 +79,7 @@ def update_provider(path: Path, provider: Provider) -> None:
                 "base_url": provider.base_url,
                 "api_key": provider.api_key,
                 "models": [{"id": model.id, "label": model.label} for model in provider.models],
-                "presets": {"default_top_5": [model.id for model in provider.models[:5]]},
+                "presets": {"default": [model.id for model in provider.models]},
             }
             _write_catalog(path, raw)
             return

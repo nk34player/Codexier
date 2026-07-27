@@ -40,14 +40,15 @@ def test_empty_key_rejected():
         validate_provider(provider(api_key=""))
 
 
-def test_selection_enforces_one_to_five_and_known_ids():
+def test_selection_allows_any_nonempty_number_of_known_models():
     with pytest.raises(ValidationError):
         select_models(provider(), [])
     with pytest.raises(ValidationError):
-        select_models(provider(), ["one"] * 6)
-    with pytest.raises(ValidationError):
         select_models(provider(), ["missing"])
     assert select_models(provider(), ["two", "one"]) == ("two", "one")
+    many = provider(models=tuple(ModelDefinition(f"model-{index}", str(index)) for index in range(10)))
+    selected = tuple(model.id for model in many.models)
+    assert select_models(many, selected) == selected
 
 
 def test_settings_enforces_unique_models():

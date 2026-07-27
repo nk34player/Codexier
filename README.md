@@ -33,11 +33,15 @@ and API key. Codexier discovers models through `/v1/models` and stores the
 catalog locally.
 
 After selecting models, choose **Apply to Codex** to update the detected Codex
-configuration. On Windows, if the ChatGPT desktop app is already running,
-Codexier gracefully closes its current-user ChatGPT processes and launches the
-app again so the new provider is loaded. If ChatGPT is not running, it remains
-closed. Use `--no-restart` to opt out; `--restart` still explicitly restarts
-Codex where supported.
+configuration. Codexier writes every saved provider into the shared catalog
+and gives each provider its own Codex profile. On Linux, run the printed
+`codex --profile ...` command for the selected provider.
+
+`--patch-desktop` installs the source-validated native provider picker on
+macOS. It backs up `/Applications/ChatGPT.app`, stops it only if it was
+running, and reopens it afterwards. ChatGPT updates require re-patching.
+Windows Microsoft Store packages are MSIX-signed, so Codexier refuses unsafe
+in-place patching rather than damaging the installed app.
 
 ## Options
 
@@ -48,6 +52,10 @@ Codex where supported.
 --yes              Skip confirmation prompts
 --no-restart       Do not prompt to restart Codex
 --restart          Attempt a safe Codex restart
+--print-command    Print selected provider's Codex CLI command
+--patch-desktop    Install the supported macOS desktop picker patch
+--restore-desktop-patch BACKUP
+                   Restore a desktop patch backup
 ```
 
 ## Security

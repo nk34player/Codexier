@@ -2,7 +2,16 @@ import json
 import tomllib
 from pathlib import Path
 
-from codexier.codex_profile import apply_codex_profile, build_catalog
+import pytest
+
+from codexier.codex_profile import (
+    apply_codex_profile,
+    apply_codex_profiles,
+    build_catalog,
+    ensure_unique_model_ids,
+    provider_profile_id,
+)
+from codexier.errors import ConfigError
 from codexier.models import ModelDefinition, Provider
 
 
@@ -116,3 +125,32 @@ def test_profile_launch_command_is_explicit():
     from codexier.codex_profile import launch_command
 
     assert launch_command() == ["codex", "--profile", "codexier"]
+
+
+def test_apply_all_profiles_writes_all_providers_and_one_catalog(tmp_path: Path):
+    other = Provider(
+        "other", "Other", "https://other.example/v1", "other-secret",
+        (ModelDefinition("other/model", "Other Model"),), {},
+    )
+    result = apply_codex_profiles((provider(), other), other, tmp_path / ".codex")
+    config = tomllib.loads(result.config_path.read_text())
+    catalog = json.loads(result.catalog_path.read_text())
+    assert provider_profile_id(other) == "codexier-other"
+    assert config["model_provider"] == "codexier-other"
+    assert set(config["model_providers"]) >= {"codexier-demo", "codexier-other"}
+    assert [model["slug"] for model in catalog["models"]] == [
+        "gpt-5.2", "claude/opus 4.8", "other/model"
+    ]
+    desktop = json.loads(result.desktop_config_path.read_text())
+    assert desktop["model_providers"]["other/model"] == "codexier-other"
+
+
+def test_duplicate_model_ids_are_rejected_before_apply(tmp_path: Path):
+    duplicate = Provider(
+        "other", "Other", "https://other.example/v1", "secret",
+        (ModelDefinition("gpt-5.2", "Different label"),), {},
+    )
+    with pytest.raises(ConfigError, match="gpt-5.2"):
+        ensure_unique_model_ids((provider(), duplicate))
+    with pytest.raises(ConfigError, match="gpt-5.2"):
+        apply_codex_profiles((provider(), duplicate), provider(), tmp_path / ".codex")

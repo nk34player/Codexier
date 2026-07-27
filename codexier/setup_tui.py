@@ -689,7 +689,15 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
         # owning Textual app. Using app keeps worker completion inside same
         # provider-manager TUI instead of crashing after live fetch.
         self.app.push_screen(
-            ModelPickerScreen(models, name),
+            ModelPickerScreen(
+                models,
+                name,
+                selected_ids=(
+                    tuple(model.id for model in self.existing_provider.models)
+                    if self.existing_provider
+                    else ()
+                ),
+            ),
             lambda selected: self._save_selected(name, url, key, models, selected),
         )
 
@@ -739,17 +747,18 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
 
-    def __init__(self, models, provider_name: str):
+    def __init__(self, models, provider_name: str, selected_ids=()):
         super().__init__()
         self.models = tuple(models)
         self.provider_name = provider_name
-        self.selected: list[str] = []
+        live_ids = {model.id for model in self.models}
+        self.selected = [model_id for model_id in selected_ids if model_id in live_ids][:5]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static(f"LIVE MODELS  /  {self.provider_name}")
             yield Static(
-                "Select up to five models to make available through Codexier. "
+                "Select models to make available through Codexier. "
                 "Press Space to toggle a model, then Enter to save.",
                 id="intro",
             )
@@ -769,11 +778,13 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
             self.query_one("#save", Button).disabled = True
             return
         for model in self.models:
-            view.append(ListItem(Label(f"○  {model.label}\n   [dim]{model.id}[/dim]"), id=widget_id("live-model", model.id)))
+            view.append(ListItem(Label(self._label(model.id)), id=widget_id("live-model", model.id)))
         view.index = 0
         view.scroll_to(0, animate=False)
-        self.query_one("#count", Static).update("SELECTED  0 / 5   (minimum 1)")
-        self.query_one("#save", Button).disabled = True
+        self.query_one("#count", Static).update(
+            f"SELECTED  {len(self.selected)}   (minimum 1)"
+        )
+        self.query_one("#save", Button).disabled = not self.selected
 
     def action_toggle(self) -> None:
         item = self.query_one("#models", ListView).highlighted_child
@@ -784,10 +795,10 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
             return
         if model_id in self.selected:
             self.selected.remove(model_id)
-        elif len(self.selected) < 5:
+        else:
             self.selected.append(model_id)
         item.query_one(Label).update(self._label(model_id))
-        self.query_one("#count", Static).update(f"SELECTED  {len(self.selected)} / 5   (minimum 1)")
+        self.query_one("#count", Static).update(f"SELECTED  {len(self.selected)}   (minimum 1)")
         self.query_one("#save", Button).disabled = not self.selected
 
     def _label(self, model_id: str) -> str:

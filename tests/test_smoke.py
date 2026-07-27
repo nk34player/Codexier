@@ -1,5 +1,5 @@
-from codexier import MAX_ACTIVE_MODELS
+from codexier import CodexSettings
 
 
 def test_package_imports():
-    assert MAX_ACTIVE_MODELS == 5
+    assert CodexSettings

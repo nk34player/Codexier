@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .config_manager import detect_config_target, load_target
-from .codex_profile import apply_codex_profile
+from .codex_profile import apply_codex_profiles, launch_command, provider_profile_id
 from .errors import CodexierError
 from .models import CodexSettings
 from .process_manager import (
@@ -20,6 +20,7 @@ from .provider_store import create_provider_catalog
 from .setup_tui import run_provider_manager
 from .settings import load_settings
 from .ui import render_preview
+from .desktop_patch import apply_desktop_patch, default_target, restore_desktop_patch
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-restart", action="store_true")
     parser.add_argument("--restart", action="store_true")
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument("--print-command", action="store_true",
+                        help="Print selected provider's Codex CLI command after applying.")
+    parser.add_argument("--patch-desktop", action="store_true",
+                        help="Install supported Windows/macOS desktop patch.")
+    parser.add_argument("--restore-desktop-patch", type=Path, metavar="BACKUP",
+                        help="Restore a desktop patch backup and exit.")
     return parser
 
 
@@ -43,6 +50,10 @@ def _confirm(prompt: str) -> bool:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.restore_desktop_patch:
+            restore_desktop_patch(default_target(), args.restore_desktop_patch)
+            print("Desktop patch restored.")
+            return 0
         catalog_path = resolve_provider_path(args.providers)
         if not catalog_path.exists():
             create_provider_catalog(catalog_path)
@@ -68,9 +79,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
 
             if target.format == "toml" or target.path.name == "config.toml":
-                result = apply_codex_profile(provider, settings=load_settings(catalog_path))
+                result = apply_codex_profiles(
+                    providers, provider, settings=load_settings(catalog_path)
+                )
                 print(f"Codex profile installed: {result.config_path}")
                 print(f"Model catalog installed: {result.catalog_path}")
+                if args.print_command or sys.platform.startswith("linux"):
+                    print("Run: " + " ".join(launch_command(provider_profile_id(provider))))
+                if args.patch_desktop:
+                    desktop_target = default_target()
+                    backup_root = Path.home() / ".codex" / "codexier-desktop-backups"
+                    print(apply_desktop_patch(desktop_target, backup_root).message)
             else:
                 from .backup import atomic_write, backup_config
 

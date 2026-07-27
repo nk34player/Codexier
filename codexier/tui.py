@@ -34,7 +34,7 @@ class SelectionState:
     def __init__(self, model_ids: Sequence[str], initial: Sequence[str] = ()):
         self.model_ids = tuple(model_ids)
         known = set(self.model_ids)
-        self._selected: list[str] = [model_id for model_id in initial if model_id in known][:5]
+        self._selected: list[str] = [model_id for model_id in initial if model_id in known]
 
     @property
     def selected(self) -> tuple[str, ...]:
@@ -44,8 +44,6 @@ class SelectionState:
         if model_id in self._selected:
             self._selected.remove(model_id)
             return
-        if len(self._selected) >= 5:
-            raise ValueError("Codex catalog supports at most 5 models.")
         self._selected.append(model_id)
 
     def confirm(self) -> tuple[str, ...]:
@@ -143,8 +141,8 @@ class CodexierApp(App[TuiResult | None]):
                 yield ListView(id="models")
                 with Vertical(id="side"):
                     yield Label("SELECTED", classes="muted")
-                    yield Static("0 / 5", id="count")
-                    yield Static("Select 1–5 models.\nModels are fetched live; unavailable providers stop safely.", id="hint", classes="muted")
+                    yield Static("0", id="count")
+                    yield Static("Select one or more models.\nModels are fetched live; unavailable providers stop safely.", id="hint", classes="muted")
                     yield Static("", id="error")
                     yield Button("Continue  ›", id="continue", variant="primary")
         yield Footer()
@@ -205,7 +203,7 @@ class CodexierApp(App[TuiResult | None]):
 
     def _refresh_summary(self) -> None:
         selected = self.state.selected if self.state else ()
-        self.query_one("#count", Static).update(f"{len(selected)} / 5")
+        self.query_one("#count", Static).update(str(len(selected)))
         self.query_one("#continue", Button).disabled = not selected
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
