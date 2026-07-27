@@ -1354,13 +1354,15 @@ def run(
     *,
     cwd: Path | None = None,
     label: str | None = None,
+    terminal: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    terminal_status(
-        "STEP",
-        label or f"Running {Path(command[0]).name}",
-        "36",
-        detail=shlex.join(command),
-    )
+    if terminal:
+        terminal_status(
+            "STEP",
+            label or f"Running {Path(command[0]).name}",
+            "36",
+            detail=shlex.join(command),
+        )
     try:
         return subprocess.run(
             command,
@@ -1372,9 +1374,19 @@ def run(
         )
     except subprocess.CalledProcessError as exc:
         output = exc.stdout.strip() if exc.stdout else ""
-        if output:
+        if output and terminal:
             terminal_panel("Command output", output, "31", stream=sys.stderr)
-        raise PatchError(f"Command failed with exit status {exc.returncode}") from exc
+        step = label or f"Running {Path(command[0]).name}"
+        message = f"{step} failed with exit status {exc.returncode}."
+        if output:
+            message += f" Diagnostic output: {output[-2000:]}"
+        else:
+            message += (
+                " The command produced no diagnostic output. Verify Node.js/npm, "
+                "close Codex/ChatGPT and retry; if it exits unexpectedly on Windows, "
+                "check Event Viewer → Windows Logs → Application."
+            )
+        raise PatchError(message) from exc
 
 
 class FancyArgumentParser(argparse.ArgumentParser):

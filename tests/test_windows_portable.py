@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import shutil
 import struct
 import subprocess
 import tomllib
@@ -11,7 +13,7 @@ import pytest
 from codexier.desktop_patch import PATCH_MARKER
 from codexier.errors import ConfigError
 from codexier.models import ModelDefinition, Provider
-from codexier.process_manager import CloseResult
+from codexier.process_manager import ChatGPTProcess, CloseResult
 from codexier.windows_portable import (
     OfficialPackage,
     _default_health_check,
@@ -20,6 +22,7 @@ from codexier.windows_portable import (
     install_portable,
     portable_root,
     portable_status,
+    refresh_portable,
     require_shared_codex_home,
     sync_and_launch_windows,
  )
@@ -99,6 +102,23 @@ def test_health_check_closes_only_the_launched_portable_process(tmp_path: Path, 
     assert [(item.pid, item.executable) for item in closed] == [
         (4321, str(executable))
     ]
+
+
+def test_health_check_reports_the_exit_code_and_diagnostics(tmp_path: Path, monkeypatch):
+    executable = tmp_path / "Codex.exe"
+    executable.write_bytes(b"exe")
+
+    class FailedProcess:
+        pid = 4321
+        stdout = io.StringIO("fatal startup error")
+
+        def wait(self, timeout):
+            return 134
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: FailedProcess())
+
+    with pytest.raises(ConfigError, match=r"code 134.*fatal startup error"):
+        _default_health_check(executable)
 
 
 @pytest.mark.parametrize(
@@ -190,7 +210,45 @@ def test_install_clones_full_package_root_patches_copy_and_keeps_source_immutabl
     assert metadata["archive"] == "bin/app/resources/app.asar"
 
 
-def test_failed_refresh_restores_previous_payload_and_metadata(tmp_path: Path, monkeypatch):
+def test_install_waits_for_a_fresh_empty_process_scan_before_cloning(
+    tmp_path: Path, monkeypatch
+):
+    package = package_fixture(tmp_path / "source")
+    config = tmp_path / "desktop-model-providers.json"
+    config.write_text('{"version": 2, "providers": []}')
+    process = ChatGPTProcess(42, r"C:\Apps\Codex.exe", r"PC\me")
+    scans = [(process,), (process,), ()]
+    detector_calls = 0
+
+    def detect(**_kwargs):
+        nonlocal detector_calls
+        detector_calls += 1
+        return scans.pop(0) if scans else ()
+
+    original_copytree = shutil.copytree
+
+    def copytree(source, destination, *args, **kwargs):
+        assert detector_calls >= 3, "the fresh scan must be empty before cloning"
+        return original_copytree(source, destination, *args, **kwargs)
+
+    closed: list[ChatGPTProcess] = []
+    monkeypatch.setattr("codexier.windows_portable.patch_windows_app", patch_staged)
+    monkeypatch.setattr("codexier.windows_portable.shutil.copytree", copytree)
+
+    status = install_portable(
+        config,
+        package=package,
+        environ={"LOCALAPPDATA": str(tmp_path / "Local")},
+        health_check=lambda _path: True,
+        close_processes=lambda processes: closed.extend(processes) or CloseResult(True, "closed"),
+        detect_processes=detect,
+    )
+
+    assert status.installed
+    assert closed == [process]
+
+
+def test_refresh_only_inspects_an_existing_portable_app(tmp_path: Path, monkeypatch):
     environ = {"LOCALAPPDATA": str(tmp_path / "Local") }
     config = tmp_path / "desktop-model-providers.json"
     config.write_text('{"version": 2, "providers": []}')
@@ -208,24 +266,32 @@ def test_failed_refresh_restores_previous_payload_and_metadata(tmp_path: Path, m
     old_metadata = metadata_path.read_bytes()
     second = package_fixture(tmp_path / "source-two", version="2.0.0.0")
     events: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        "codexier.windows_portable.detect_chatgpt_processes",
+        lambda **_kwargs: pytest.fail("Refresh must not close or inspect processes"),
+    )
+    monkeypatch.setattr(
+        "codexier.windows_portable.patch_windows_app",
+        lambda *_args, **_kwargs: pytest.fail("Refresh must not patch or recreate the app"),
+    )
 
-    with pytest.raises(ConfigError, match="outside package identity"):
-        install_portable(
-            config,
-            refresh=True,
-            package=second,
-            environ=environ,
-            progress=lambda percent, detail: events.append((percent, detail)),
-            health_check=lambda _path: False,
-            close_processes=close,
-        )
+    refreshed = refresh_portable(
+        package=second,
+        environ=environ,
+        progress=lambda percent, detail: events.append((percent, detail)),
+    )
 
-    restored = portable_status(first, environ=environ)
-    assert restored.executable and restored.archive
-    assert restored.executable.read_bytes() == old_exe
-    assert restored.archive.read_bytes() == old_asar
+    assert refreshed.installed and refreshed.update_available
+    assert installed.executable and installed.archive
+    assert installed.executable.read_bytes() == old_exe
+    assert installed.archive.read_bytes() == old_asar
     assert metadata_path.read_bytes() == old_metadata
-    assert any("rollback verification" in detail for _, detail in events)
+    assert [percent for percent, _ in events] == [5, 12, 100]
+
+
+def test_refresh_requires_an_existing_portable_app(tmp_path: Path):
+    with pytest.raises(ConfigError, match="Create portable app first"):
+        refresh_portable(package=package_fixture(tmp_path / "source"), environ={"LOCALAPPDATA": str(tmp_path / "Local")})
 
 
 def test_portable_status_detects_manual_update_and_already_current_install(

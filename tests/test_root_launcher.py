@@ -74,3 +74,13 @@ def test_clean_caches_requires_an_explicit_launcher_option(monkeypatch):
 
     assert main(("--clean-caches",)) == 0
     assert calls == [True]
+
+
+def test_launcher_handles_ctrl_c_without_a_traceback(monkeypatch, capsys):
+    def interrupted(_args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("codexier.main.run_codexier", interrupted)
+
+    assert main(()) == 130
+    assert capsys.readouterr().out.strip() == "codexier: cancelled."

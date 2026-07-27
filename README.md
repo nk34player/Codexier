@@ -56,11 +56,12 @@ Open **Settings → Windows desktop apps** and choose one of two modes:
   that managed copy. It exports every enabled provider through the provider-first
   model picker.
 
-Portable creation and refresh use the installed Store package as a read-only
-source. Codexier never changes `WindowsApps`, removes package signatures, or
-registers a modified AppX/MSIX. It does not require Codex App Manager, a mirror,
-or another external project. Refreshes are manual from **Refresh portable app**;
-use **Repair patch** after a patch problem.
+**Create portable app** is the only action that copies the installed Store
+payload. **Refresh portable status** only re-scans an existing portable copy and
+its source version; it never copies, patches, or replaces the app. Codexier
+never changes `WindowsApps`, removes package signatures, or registers a modified
+AppX/MSIX. It does not require Codex App Manager, a mirror, or another external
+project. Use **Repair patch** after a patch problem.
 
 Both modes use the same lowercase `codexier` profile, displayed as `Codexier`,
 and the standard `%USERPROFILE%\.codex` home. Existing sessions, chats,

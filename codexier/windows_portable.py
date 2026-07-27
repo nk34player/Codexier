@@ -7,12 +7,14 @@ executable payload to LocalAppData and patches only that private copy.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import ntpath
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -98,6 +100,40 @@ def _patch_log(progress: PatchProgress | None) -> PatchProgress | None:
     return lambda _percent, detail: progress(
         PORTABLE_PROGRESS["patching"], f"patching: {detail}"
     )
+
+
+def _close_all_desktop_processes(
+    progress: PatchProgress | None,
+    *,
+    close_processes: Callable[[Sequence[ChatGPTProcess]], Any] = gracefully_close_chatgpt_processes,
+    detect_processes: Callable[..., tuple[ChatGPTProcess, ...]] = detect_chatgpt_processes,
+    timeout_seconds: float = 12.0,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Wait for a fresh process scan to prove the desktop app is fully closed."""
+    _emit(progress, "process shutdown", "requesting graceful shutdown of Official and Portable Codex")
+    closed = close_processes(detect_processes(platform="win32"))
+    if not getattr(closed, "closed", False):
+        raise ConfigError(getattr(closed, "message", "Codex did not close normally."))
+
+    _emit(progress, "process shutdown", "waiting for every ChatGPT/Codex process to exit")
+    deadline = clock() + timeout_seconds
+    processes = detect_processes(platform="win32")
+    while processes:
+        if clock() >= deadline:
+            details = ", ".join(
+                f"{process.pid} ({process.executable or 'unknown path'})"
+                for process in processes
+            )
+            raise ConfigError(
+                "Codex is still closing after the normal close request "
+                f"(PIDs: {details}). Close it normally and try again; "
+                "Codexier did not copy or modify any app files."
+            )
+        sleep(0.1)
+        processes = detect_processes(platform="win32")
+    _emit(progress, "process shutdown", "all ChatGPT/Codex processes are fully closed")
 
 
 def _hash(path: Path) -> str:
@@ -368,45 +404,64 @@ def _default_health_check(executable: Path) -> bool:
     try:
         process = subprocess.Popen(
             [str(executable), "--version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
         try:
-            return process.wait(timeout=5) == 0
+            exit_code = process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             launched = (ChatGPTProcess(process.pid, str(executable), ""),)
             return gracefully_close_chatgpt_processes(launched).closed
-    except OSError:
-        return False
+        if exit_code == 0:
+            return True
+        output = getattr(process, "stdout", None)
+        detail = output.read().strip() if isinstance(output, io.TextIOBase) else ""
+        message = (
+            f"Portable Codex exited with code {exit_code} during its startup health check."
+        )
+        if detail:
+            message += f" Diagnostic output: {detail[-2000:]}"
+        else:
+            message += (
+                " Windows did not provide diagnostics; check Event Viewer → "
+                "Windows Logs → Application for the Codex.exe failure."
+            )
+        raise ConfigError(message)
+    except OSError as exc:
+        raise ConfigError(
+            f"Could not start Portable Codex for its startup health check: {exc}"
+        ) from exc
 
 
 def install_portable(
     config: Path | None,
     *,
     prepare_config: Callable[[], Path] | None = None,
-    refresh: bool = False,
     package: OfficialPackage | None = None,
     environ: Mapping[str, str] | None = None,
     progress: PatchProgress | None = None,
     health_check: Callable[[Path], bool] = _default_health_check,
     close_processes: Callable[[Sequence[ChatGPTProcess]], Any] = gracefully_close_chatgpt_processes,
+    detect_processes: Callable[..., tuple[ChatGPTProcess, ...]] = detect_chatgpt_processes,
 ) -> PortableStatus:
-    """Create or manually refresh the managed portable application."""
+    """Create the managed portable application once."""
     _emit(progress, "detection", "discovering the installed OpenAI.Codex package")
     package = package or discover_official_package()
     status = portable_status(package, environ=environ)
-    if status.installed and status.patched and not refresh:
-        _emit(progress, "completion", status.message)
-        return status
-    if refresh and status.installed and not status.update_available and status.patched:
-        _emit(progress, "completion", "portable app already matches the Store payload")
+    if status.installed:
+        _emit(
+            progress,
+            "completion",
+            "portable app already exists; Refresh portable status only checks its status",
+        )
         return status
     _emit(progress, "validation", "validated the signed source payload and manifest entry point")
-    processes = detect_chatgpt_processes(platform="win32")
-    _emit(progress, "process shutdown", "requesting graceful shutdown of Official and Portable Codex")
-    closed = close_processes(processes)
-    if not getattr(closed, "closed", False):
-        raise ConfigError(getattr(closed, "message", "Codex did not close normally."))
+    _close_all_desktop_processes(
+        progress,
+        close_processes=close_processes,
+        detect_processes=detect_processes,
+    )
     if prepare_config is not None:
         config = prepare_config()
     if config is None or not config.is_file():
@@ -513,6 +568,24 @@ def install_portable(
     return final
 
 
+def refresh_portable(
+    package: OfficialPackage | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+    progress: PatchProgress | None = None,
+) -> PortableStatus:
+    """Refresh displayed metadata for an existing portable app without changing it."""
+    _emit(progress, "detection", "inspecting the managed portable installation")
+    current = portable_status(environ=environ)
+    if not current.installed:
+        raise ConfigError("Portable Codex is not installed. Use Create portable app first.")
+    package = package or discover_official_package()
+    status = portable_status(package, environ=environ)
+    _emit(progress, "validation", "validated the existing portable executable and app.asar")
+    _emit(progress, "completion", status.message)
+    return status
+
+
 def repair_portable(
     config: Path | None,
     *,
@@ -525,12 +598,11 @@ def repair_portable(
     if not status.installed or status.archive is None:
         raise ConfigError("Create the portable app before repairing its patch.")
     _emit(progress, "validation", "validated the portable executable and app.asar paths")
-    _emit(progress, "process shutdown", "requesting graceful shutdown of Official and Portable Codex")
-    closed = gracefully_close_chatgpt_processes(
-        detect_chatgpt_processes(platform="win32")
+    _close_all_desktop_processes(
+        progress,
+        close_processes=gracefully_close_chatgpt_processes,
+        detect_processes=detect_chatgpt_processes,
     )
-    if not closed.closed:
-        raise ConfigError(closed.message)
     if prepare_config is not None:
         config = prepare_config()
     if config is None or not config.is_file():
@@ -604,12 +676,11 @@ def sync_and_launch_windows(
     if mode == "portable" and not portable.installed:
         raise ConfigError("Create the portable app from Settings before launching Portable mode.")
 
-    _emit(progress, "process shutdown", "requesting graceful shutdown before switching modes")
-    closed = gracefully_close_chatgpt_processes(
-        detect_chatgpt_processes(platform="win32")
+    _close_all_desktop_processes(
+        progress,
+        close_processes=gracefully_close_chatgpt_processes,
+        detect_processes=detect_chatgpt_processes,
     )
-    if not closed.closed:
-        raise ConfigError(closed.message)
 
     scope = (selected_provider,) if mode == "official" else enabled
     profile = apply_codex_profiles(

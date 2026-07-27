@@ -10,7 +10,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
@@ -20,6 +20,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    ProgressBar,
     RichLog,
     Static,
     TabbedContent,
@@ -663,6 +664,74 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             self.action_cancel()
 
 
+class WindowsProviderListView(ListView):
+    """Keep arrow-key navigation inside the active Windows desktop tab."""
+
+    def action_cursor_down(self) -> None:
+        if self.index is not None and self.index < len(self.children) - 1:
+            super().action_cursor_down()
+        else:
+            self.screen._focus_first_windows_action()  # type: ignore[attr-defined]
+
+    def action_cursor_up(self) -> None:
+        if self.index not in (None, 0):
+            super().action_cursor_up()
+
+
+class WindowsProgressScreen(ModalScreen[None]):
+    """Uncancellable progress view; the close button appears only after work ends."""
+
+    CSS = """
+    WindowsProgressScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
+    #progress-shell { width: 88%; height: 80%; padding: 1 2; border: round #3b82f6; background: #131d38; }
+    #progress-title { color: #8be9fd; text-style: bold; }
+    #progress-status { height: 2; color: #c7d2fe; }
+    #progress-log { height: 1fr; margin-top: 1; border: round #263b68; background: #080d19; }
+    #progress-close { display: none; margin-top: 1; background: #374151; color: white; }
+    .error { color: #ff6b8a; }
+    """
+
+    def __init__(self, title: str):
+        super().__init__()
+        self.title = title
+        self.finished = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="progress-shell"):
+            yield Static(self.title, id="progress-title")
+            yield ProgressBar(total=100, show_eta=False, id="progress-bar")
+            yield Static("Starting …", id="progress-status")
+            yield RichLog(id="progress-log", wrap=True, markup=True)
+            yield Button("Close", id="progress-close")
+
+    def on_key(self, event: events.Key) -> None:
+        if not self.finished:
+            event.stop()
+
+    def update_progress(self, percent: int, detail: str) -> None:
+        self.query_one("#progress-bar", ProgressBar).update(progress=percent)
+        self.query_one("#progress-status", Static).update(f"{percent:3d}%  {detail}")
+        self.query_one("#progress-log", RichLog).write(
+            f"[cyan]{percent:3d}%[/cyan] {detail}", scroll_end=True
+        )
+
+    def finish(self, message: str, *, error: bool = False) -> None:
+        self.finished = True
+        status = self.query_one("#progress-status", Static)
+        status.update(message)
+        if error:
+            status.add_class("error")
+            self.query_one("#progress-log", RichLog).write(
+                f"[red]ERROR[/red] {message}", scroll_end=True
+            )
+        self.query_one("#progress-close", Button).display = True
+        self.query_one("#progress-close", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "progress-close" and self.finished:
+            self.dismiss(None)
+
+
 class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
@@ -674,9 +743,8 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     .provider-list > ListItem { min-height: 3; padding: 1 2; }
     .actions { height: auto; min-height: 4; margin-top: 1; }
     Button { margin-right: 1; background: #2563eb; color: white; }
-    #back, #log-toggle { background: #374151; }
+    #back { background: #374151; }
     #windows-status { height: auto; min-height: 4; color: #8be9fd; padding: 1 0; }
-    #windows-log { height: 10; border: round #263b68; background: #080d19; }
     .error { color: #ff6b8a; }
     """
     BINDINGS = [
@@ -697,6 +765,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.settings = load_settings(catalog_path)
         mode = initial_tab or self.settings["windows"]["mode"]
         self.initial_tab = f"{mode}-tab"
+        self.progress_screen: WindowsProgressScreen | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
@@ -707,7 +776,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                         "The signed Microsoft Store package stays untouched. "
                         "Choose one enabled custom provider for this mode."
                     )
-                    yield ListView(id="official-providers", classes="provider-list")
+                    yield WindowsProviderListView(id="official-providers", classes="provider-list")
                     with Horizontal(classes="actions"):
                         yield Button(
                             "Sync and launch official app",
@@ -719,10 +788,10 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                         "Codexier clones the installed Store payload into LocalAppData, "
                         "patches only that copy, and exposes every enabled provider."
                     )
-                    yield ListView(id="portable-providers", classes="provider-list")
+                    yield WindowsProviderListView(id="portable-providers", classes="provider-list")
                     with Horizontal(classes="actions"):
                         yield Button("Create portable app", id="portable-create")
-                        yield Button("Refresh portable app", id="portable-refresh")
+                        yield Button("Refresh portable status", id="portable-refresh")
                         yield Button("Repair patch", id="portable-repair")
                         yield Button(
                             "Sync and launch portable app",
@@ -730,15 +799,11 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                             variant="primary",
                         )
             yield Static("Loading Windows desktop status …", id="windows-status")
-            yield RichLog(id="windows-log", wrap=True, markup=True)
             with Horizontal(classes="actions"):
-                yield Button("Show / hide detailed log", id="log-toggle")
                 yield Button("Back to settings", id="back")
         yield Footer()
 
     async def on_mount(self) -> None:
-        log = self.query_one("#windows-log", RichLog)
-        log.display = False
         if not self.providers:
             from .provider_store import ProviderStore
 
@@ -765,6 +830,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                 ),
                 0 if enabled else None,
             )
+        self.call_after_refresh(self._focus_active_provider_list)
         self.run_worker(self._load_status(), exclusive=True)
 
     async def _load_status(self) -> None:
@@ -796,6 +862,41 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             None,
         )
 
+    def _active_view_id(self) -> str:
+        active = self.query_one(TabbedContent).active
+        return "official-providers" if active == "official-tab" else "portable-providers"
+
+    def _active_windows_actions(self) -> tuple[Button, ...]:
+        if self._active_view_id() == "official-providers":
+            ids = ("official-sync", "back")
+        else:
+            ids = ("portable-create", "portable-refresh", "portable-repair", "portable-sync", "back")
+        return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
+
+    def _focus_active_provider_list(self) -> None:
+        self.query_one(f"#{self._active_view_id()}", ListView).focus()
+
+    def _focus_first_windows_action(self) -> None:
+        self._active_windows_actions()[0].focus()
+
+    @on(TabbedContent.TabActivated)
+    def _on_windows_tab_activated(self, _: TabbedContent.TabActivated) -> None:
+        self.call_after_refresh(self._focus_active_provider_list)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down"} or not isinstance(self.focused, Button):
+            return
+        buttons = self._active_windows_actions()
+        try:
+            index = buttons.index(self.focused)
+        except ValueError:
+            return
+        if event.key == "up":
+            (self.query_one(f"#{self._active_view_id()}", ListView) if index == 0 else buttons[index - 1]).focus()
+        elif index < len(buttons) - 1:
+            buttons[index + 1].focus()
+        event.stop()
+
     def _write_desktop_config(self, selected: Provider) -> object:
         from .windows_portable import require_shared_codex_home
 
@@ -821,21 +922,33 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
     def _show_progress(self, percent: int, detail: str) -> None:
         self.query_one("#windows-status", Static).update(f"{percent:3d}%  {detail}")
-        self.query_one("#windows-log", RichLog).write(
-            f"[cyan]{percent:3d}%[/cyan] {detail}"
-        )
+        if self.progress_screen is not None:
+            self.progress_screen.update_progress(percent, detail)
+
+    @staticmethod
+    def _action_title(action: str) -> str:
+        return {
+            "official-sync": "Syncing and launching Official Codex",
+            "portable-create": "Creating Portable Codex",
+            "portable-refresh": "Refreshing Portable Codex status",
+            "portable-repair": "Repairing Portable Codex patch",
+            "portable-sync": "Syncing and launching Portable Codex",
+        }[action]
 
     async def _run_action(self, action: str) -> None:
         status = self.query_one("#windows-status", Static)
         view_id = "official-providers" if action == "official-sync" else "portable-providers"
-        selected = self._selected_provider(view_id)
-        if selected is None:
+        selected = None if action == "portable-refresh" else self._selected_provider(view_id)
+        if action != "portable-refresh" and selected is None:
             status.update("Enable and select a provider first.")
             status.add_class("error")
             return
+        self.progress_screen = WindowsProgressScreen(self._action_title(action))
+        await self.app.push_screen(self.progress_screen)
         try:
             from .windows_portable import (
                 install_portable,
+                refresh_portable,
                 repair_portable,
                 sync_and_launch_windows,
             )
@@ -843,6 +956,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             self.settings = load_settings(self.catalog_path)
             windows = self.settings["windows"]
             if action == "official-sync":
+                assert selected is not None
                 windows["mode"] = "official"
                 windows["official_provider_id"] = selected.id
                 await asyncio.to_thread(
@@ -853,18 +967,21 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                     self.settings,
                     progress=self._progress,
                 )
-            elif action in {"portable-create", "portable-refresh"}:
+            elif action == "portable-create":
+                assert selected is not None
                 windows["mode"] = "portable"
                 windows["portable_default_provider_id"] = selected.id
                 await asyncio.to_thread(
                     install_portable,
                     None,
                     prepare_config=lambda: self._write_desktop_config(selected),
-                    refresh=action == "portable-refresh",
                     progress=self._progress,
                 )
                 save_settings(self.catalog_path, self.settings)
+            elif action == "portable-refresh":
+                await asyncio.to_thread(refresh_portable, progress=self._progress)
             elif action == "portable-repair":
+                assert selected is not None
                 await asyncio.to_thread(
                     repair_portable,
                     None,
@@ -872,6 +989,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                     progress=self._progress,
                 )
             else:
+                assert selected is not None
                 windows["mode"] = "portable"
                 windows["portable_default_provider_id"] = selected.id
                 await asyncio.to_thread(
@@ -885,17 +1003,15 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         except (ConfigError, PatchError, OSError) as exc:
             status.update(str(exc))
             status.add_class("error")
-            self.query_one("#windows-log", RichLog).write(f"[red]ERROR[/red] {exc}")
+            self.progress_screen.finish(str(exc), error=True)
             return
         status.remove_class("error")
         await self._load_status()
+        self.progress_screen.finish("Completed. Review the detailed log, then close.")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "back":
             self.dismiss(True)
-        elif event.button.id == "log-toggle":
-            log = self.query_one("#windows-log", RichLog)
-            log.display = not log.display
         elif event.button.id:
             self.run_worker(self._run_action(event.button.id), exclusive=True)
 

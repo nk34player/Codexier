@@ -170,6 +170,7 @@ def patch_windows_app(
             run(
                 [npx, "--yes", ASAR_PACKAGE, "extract", str(archive), str(extracted)],
                 label="Extracting Windows application resources",
+                terminal=False,
             )
             assets = extracted / "webview" / "assets"
             if not assets.is_dir():
@@ -190,6 +191,7 @@ def patch_windows_app(
             run(
                 [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
                 label="Preparing the JavaScript bundles",
+                terminal=False,
             )
             apply_supported_patch_variant(central, picker)
             if PATCH_MARKER.decode() not in central.read_text(encoding="utf-8"):
@@ -197,11 +199,13 @@ def patch_windows_app(
             run(
                 [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
                 label="Formatting patched JavaScript",
+                terminal=False,
             )
             report(progress, "repack", "repacking the patched application archive")
             run(
                 [npx, "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_archive)],
                 label="Packing patched Windows application resources",
+                terminal=False,
             )
             if not contains_marker(patched_archive):
                 raise PatchError("Packed Windows app.asar is missing the patch marker.")

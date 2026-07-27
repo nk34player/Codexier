@@ -8,8 +8,13 @@ if exist ".venv\Scripts\python.exe" (
 ) else (
     python codexier\main.py %*
 )
+set "CODEXIER_EXIT=%ERRORLEVEL%"
+
+if "%CODEXIER_EXIT%"=="130" (
+    endlocal & exit /b 130
+)
 
 echo.
 echo Codexier finished. Press any key to close this window.
 pause >nul
-endlocal
+endlocal & exit /b %CODEXIER_EXIT%

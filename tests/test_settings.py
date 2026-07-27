@@ -3,10 +3,16 @@ import asyncio
 from pathlib import Path
 
 from textual.app import App
-from textual.widgets import Label, ListItem
+from textual.widgets import Button, Label, ListItem, ListView, RichLog
 
+from codexier.models import ModelDefinition, Provider
 from codexier.settings import DEFAULT_SETTINGS, MAX_CONTEXT_WINDOW, load_settings, save_settings
-from codexier.setup_tui import ContextProfilesScreen, SettingsScreen, WindowsDesktopScreen
+from codexier.setup_tui import (
+    ContextProfilesScreen,
+    SettingsScreen,
+    WindowsDesktopScreen,
+    WindowsProgressScreen,
+)
 
 
 def test_settings_are_created_next_to_provider_catalog(tmp_path: Path):
@@ -55,9 +61,91 @@ def test_windows_settings_screen_exposes_official_and_portable_actions(tmp_path:
     assert "Portable App" in copy
     assert "Sync and launch official app" in copy
     assert "Create portable app" in copy
-    assert "Refresh portable app" in copy
+    assert "Refresh portable status" in copy
     assert "Repair patch" in copy
     assert "Sync and launch portable app" in copy
+
+
+def test_portable_screen_uses_arrow_keys_for_lists_and_buttons(tmp_path: Path):
+    async def scenario() -> None:
+        provider = Provider(
+            "example",
+            "Example",
+            "https://example.test/v1",
+            "key",
+            (ModelDefinition("example-model", "Example Model"),),
+            {},
+            True,
+        )
+        app = App()
+        async with app.run_test() as pilot:
+            screen = WindowsDesktopScreen(
+                tmp_path / "providers.json", (provider,), initial_tab="portable"
+            )
+            app.push_screen(screen)
+            await pilot.pause()
+            view = screen.query_one("#portable-providers", ListView)
+            assert app.focused is view
+            await pilot.press("down")
+            assert app.focused is screen.query_one("#portable-create", Button)
+            await pilot.press("down")
+            assert app.focused is screen.query_one("#portable-refresh", Button)
+            await pilot.press("up")
+            assert app.focused is screen.query_one("#portable-create", Button)
+
+    asyncio.run(scenario())
+
+
+def test_progress_dialog_shows_an_auto_scrolling_console_by_default():
+    async def scenario() -> None:
+        app = App()
+        async with app.run_test() as pilot:
+            dialog = WindowsProgressScreen("Creating Portable Codex")
+            app.push_screen(dialog)
+            await pilot.pause()
+            log = dialog.query_one("#progress-log", RichLog)
+            assert log.display
+            dialog.update_progress(25, "cloning: copying app files")
+            assert dialog.query_one("#progress-bar").progress == 25
+            dialog.finish("Completed.")
+            assert dialog.query_one("#progress-close", Button).display
+
+    asyncio.run(scenario())
+
+
+def test_refresh_portable_status_does_not_require_a_provider(tmp_path: Path, monkeypatch):
+    async def scenario() -> None:
+        refreshed = []
+        monkeypatch.setattr(
+            "codexier.windows_portable.refresh_portable",
+            lambda **_kwargs: refreshed.append(True),
+        )
+        provider = Provider(
+            "disabled",
+            "Disabled",
+            "https://disabled.test/v1",
+            "key",
+            (),
+            {},
+            False,
+        )
+        app = App()
+        screen = WindowsDesktopScreen(
+            tmp_path / "providers.json", (provider,), initial_tab="portable"
+        )
+
+        async def skip_status_load() -> None:
+            pass
+
+        screen._load_status = skip_status_load  # type: ignore[method-assign]
+        async with app.run_test() as pilot:
+            app.push_screen(screen)
+            await pilot.pause()
+            await screen._run_action("portable-refresh")
+            assert refreshed == [True]
+            assert isinstance(app.screen, WindowsProgressScreen)
+
+    asyncio.run(scenario())
 
 
 def test_settings_accept_maximum_context_limit(tmp_path: Path):

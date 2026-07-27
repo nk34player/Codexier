@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -15,6 +16,7 @@ from codexier.desktop_patch_macos import (
     PatchError,
     ensure_provider_config,
     render_unified_diff,
+    run,
     validate_provider_config,
 )
 from codexier.patch_progress import MILESTONES
@@ -163,6 +165,21 @@ def test_missing_provider_config_is_not_replaced_with_examples(tmp_path: Path):
         ensure_provider_config(config, overwrite=False)
 
     assert not config.exists()
+
+
+def test_failed_patch_command_names_the_stage_when_it_has_no_output(monkeypatch):
+    monkeypatch.setattr(
+        "codexier.desktop_patch_macos.subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(134, ["npx"], output="")
+        ),
+    )
+
+    with pytest.raises(PatchError, match=r"Formatting patched JavaScript failed with exit status 134") as error:
+        run(["npx", "--version"], label="Formatting patched JavaScript", terminal=False)
+
+    assert "Verify Node.js/npm" in str(error.value)
+    assert "Event Viewer" in str(error.value)
 
 
 def test_windows_rollback_restores_verified_archive_after_post_backup_failure(

@@ -116,16 +116,20 @@ def run_script(script: Path, argv: Sequence[str], root: Path = ROOT) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = tuple(sys.argv[1:] if argv is None else argv)
-    if args and args[0] == "--clean-caches":
-        clear_caches()
-        return 0
-    if args and args[0] == "--script":
-        if len(args) < 2:
-            print("Usage: launcher --script SCRIPT [ARGS ...]")
-            return 2
-        return run_script((ROOT / args[1]).resolve(), args[2:])
-    return run_codexier(args)
+    try:
+        args = tuple(sys.argv[1:] if argv is None else argv)
+        if args and args[0] == "--clean-caches":
+            clear_caches()
+            return 0
+        if args and args[0] == "--script":
+            if len(args) < 2:
+                print("Usage: launcher --script SCRIPT [ARGS ...]")
+                return 2
+            return run_script((ROOT / args[1]).resolve(), args[2:])
+        return run_codexier(args)
+    except KeyboardInterrupt:
+        print("\ncodexier: cancelled.")
+        return 130
 
 
 if __name__ == "__main__":
