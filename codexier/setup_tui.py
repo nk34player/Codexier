@@ -35,6 +35,22 @@ _HIDDEN_PROVIDER_MANAGER_BINDINGS = [
 ]
 
 
+class _InitialTerminalRefresh:
+    """Repair the first paint on terminals that drop Textual's initial diff.
+
+    Windows Terminal can occasionally show widgets as solid blocks until the
+    window is resized.  A layout + repaint after the first refresh is cheap and
+    makes the initial frame deterministic without requiring user interaction.
+    """
+
+    def on_ready(self) -> None:
+        self.refresh(repaint=True, layout=True)
+        self.call_after_refresh(self._refresh_initial_terminal_frame)
+
+    def _refresh_initial_terminal_frame(self) -> None:
+        self.refresh(repaint=True, layout=True)
+
+
 class _ProviderManagerShortcutIsolation:
     def action_ignore_manager_shortcut(self) -> None:
         """Prevent manager shortcuts from leaking into a child screen."""
@@ -84,7 +100,7 @@ class ProviderListView(ListView):
             self.post_message(self.Confirmed(self, self.highlighted_child))
 
 
-class SetupApp(App[bool]):
+class SetupApp(_InitialTerminalRefresh, App[bool]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
@@ -183,7 +199,7 @@ def run_setup_tui(catalog_path) -> bool:
     return bool(SetupApp(catalog_path).run())
 
 
-class ProviderManagerApp(App[Provider | None]):
+class ProviderManagerApp(_InitialTerminalRefresh, App[Provider | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }

@@ -13,6 +13,17 @@ from .model_client import LiveModel, ModelFetchError, fetch_models
 from .models import Provider
 
 
+class _InitialTerminalRefresh:
+    """Force a second full paint for terminals that drop the first diff."""
+
+    def on_ready(self) -> None:
+        self.refresh(repaint=True, layout=True)
+        self.call_after_refresh(self._refresh_initial_terminal_frame)
+
+    def _refresh_initial_terminal_frame(self) -> None:
+        self.refresh(repaint=True, layout=True)
+
+
 def widget_id(prefix: str, value: str) -> str:
     """Encode arbitrary provider/model text into a valid Textual id."""
     # Textual IDs allow only letters, numbers, underscores, and hyphens.
@@ -60,7 +71,7 @@ class TuiResult:
     models: tuple[str, ...]
 
 
-class ProviderApp(App[Provider | None]):
+class ProviderApp(_InitialTerminalRefresh, App[Provider | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
@@ -103,7 +114,7 @@ def run_provider_tui(providers: Sequence[Provider]) -> Provider | None:
     return ProviderApp(providers).run()
 
 
-class CodexierApp(App[TuiResult | None]):
+class CodexierApp(_InitialTerminalRefresh, App[TuiResult | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
