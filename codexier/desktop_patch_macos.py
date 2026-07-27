@@ -1052,6 +1052,33 @@ function CodexCustomProviderPickerSection() {
   });
 }"""
 
+CODEX_26721_4979_LAYOUT = "Codex 26.721.4979 provider-first picker"
+CODEX_26721_4979_CENTRAL_ANCHOR = (
+    "function s9t(e){if(`data`in e)return e;let t=abe(e);"
+    "return t==null?e:{...e,data:t}}var c9t,l9t,u9t,d9t,f9t,p9t,"
+)
+CODEX_26721_4979_REQUEST_ANCHOR = (
+    "async sendRequest(e,t,n){if(this.dispatchMessage==null)throw Error("
+    "`AppServerRequestClient is missing a message dispatcher`);return "
+    "e===`config/read`?"
+)
+CODEX_26721_4979_PREWARM_ANCHOR = (
+    "async prewarmThreadStart(e,t){if(this.dispatchMessage==null)throw Error("
+    "`AppServerRequestClient is missing a message dispatcher`);let n="
+)
+CODEX_26721_4979_PICKER_ANCHOR = "function dMs(e){"
+CODEX_26721_4979_MODELS_ANCHOR = (
+    "triggerButton:N}=e,P=m===void 0?!1:m,F=E===void 0?!1:E,"
+)
+CODEX_26721_4979_MENU_ANCHOR = (
+    "children:[m,(0,TQ.jsx)(`div`,{className:"
+    "`vertical-scroll-fade-mask flex max-h-[250px] flex-col overflow-y-auto`,"
+)
+CODEX_26721_4979_REACT_ANCHOR = (
+    "var pMs,TQ,mMs=e((()=>{pMs=c(),pd(),ad(),uls(),yss(),bss(),VAs(),Xm(),"
+    "qX(),dD(),bz(),Hos(),Mcs(),ycs(),zos(),Zos(),Kos(),kcs(),TQ=J()})),"
+)
+
 # These are deliberately generated rather than hand-written unified-diff
 # lines.  It prevents an accidental missing `+` from creating an invalid
 # embedded patch while retaining exact source-hunk matching.
@@ -1884,11 +1911,87 @@ def render_unified_diff(source: str, unified_diff: str, source_name: str) -> str
     return "\n".join(source_lines) + ("\n" if had_trailing_newline else "")
 
 
+def _replace_once(source: str, old: str, new: str, layout: str) -> str:
+    if source.count(old) != 1:
+        raise PatchError(f"{layout}: required source anchor was not unique")
+    return source.replace(old, new, 1)
+
+
+def _apply_codex_26721_4979_layout(source: str) -> str:
+    """Apply source-validated routing to the merged 26.721.4979 web bundle."""
+    layout = CODEX_26721_4979_LAYOUT
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_CENTRAL_ANCHOR,
+        CODEX_26721_4979_CENTRAL_ANCHOR.replace(
+            "var c9t,",
+            f"{CENTRAL_V7_JAVASCRIPT}\nvar c9t,",
+        ),
+        layout,
+    )
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_REQUEST_ANCHOR,
+        CODEX_26721_4979_REQUEST_ANCHOR.replace(
+            ");return ", ");t=await codexPatchAppServerParams(e,t);return "
+        ),
+        layout,
+    )
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_PREWARM_ANCHOR,
+        CODEX_26721_4979_PREWARM_ANCHOR.replace(
+            ");let n=", ");e=await codexPatchAppServerParams(`thread/start`,e);let n="
+        ),
+        layout,
+    )
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_PICKER_ANCHOR,
+        f"{PICKER_V7_JAVASCRIPT.replace('wQ', 'TQ')}\n{CODEX_26721_4979_PICKER_ANCHOR}",
+        layout,
+    )
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_MODELS_ANCHOR,
+        CODEX_26721_4979_MODELS_ANCHOR.replace("}=e,", "}=e,p=codexUseProviderModels(p),"),
+        layout,
+    )
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_MENU_ANCHOR,
+        CODEX_26721_4979_MENU_ANCHOR.replace(
+            "children:[m,", "children:[m,(0,TQ.jsx)(CodexCustomProviderPickerSection,{}),"
+        ),
+        layout,
+    )
+    return _replace_once(
+        source,
+        CODEX_26721_4979_REACT_ANCHOR,
+        CODEX_26721_4979_REACT_ANCHOR.replace(
+            "var pMs,TQ,",
+            "var pMs,TQ,CodexProviderPatchReact,",
+        ).replace(
+            "pMs=c(),pd()",
+            "pMs=c(),CodexProviderPatchReact=r(o(),1),pd()",
+        ),
+        layout,
+    )
+
+
 def apply_supported_patch_variant(central: Path, picker: Path) -> str:
     originals = {
         path: path.read_text(encoding="utf-8") for path in {central, picker}
     }
     compatible: list[tuple[str, dict[Path, str]]] = []
+
+    if central == picker:
+        try:
+            compatible.append(
+                (CODEX_26721_4979_LAYOUT, {central: _apply_codex_26721_4979_layout(originals[central])})
+            )
+        except PatchError:
+            pass
 
     for name, central_diff, picker_diff in PATCH_VARIANTS:
         rendered = originals.copy()

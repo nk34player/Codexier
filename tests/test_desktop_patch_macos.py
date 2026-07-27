@@ -4,6 +4,14 @@ import subprocess
 import pytest
 
 from codexier.desktop_patch_macos import (
+    CODEX_26721_4979_CENTRAL_ANCHOR,
+    CODEX_26721_4979_LAYOUT,
+    CODEX_26721_4979_MENU_ANCHOR,
+    CODEX_26721_4979_MODELS_ANCHOR,
+    CODEX_26721_4979_PICKER_ANCHOR,
+    CODEX_26721_4979_PREWARM_ANCHOR,
+    CODEX_26721_4979_REACT_ANCHOR,
+    CODEX_26721_4979_REQUEST_ANCHOR,
     CENTRAL_DIFF,
     CENTRAL_DIFF_V6_TO_V7,
     CENTRAL_DIFF_26721_V7,
@@ -14,6 +22,7 @@ from codexier.desktop_patch_macos import (
     PICKER_DIFF_26721_V7,
     PICKER_V7_JAVASCRIPT,
     PatchError,
+    apply_supported_patch_variant,
     ensure_provider_config,
     render_unified_diff,
     run,
@@ -179,6 +188,78 @@ def test_patch_hunks_match_minified_javascript_without_prettier():
     patched = render_unified_diff(source, diff, "bundle.js")
 
     assert "return e + 1;" in patched
+
+
+def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path):
+    bundle = tmp_path / "app-initial.js"
+    bundle.write_text(
+        "".join(
+            (
+                CODEX_26721_4979_CENTRAL_ANCHOR,
+                CODEX_26721_4979_REQUEST_ANCHOR,
+                CODEX_26721_4979_PREWARM_ANCHOR,
+                CODEX_26721_4979_PICKER_ANCHOR,
+                CODEX_26721_4979_MODELS_ANCHOR,
+                CODEX_26721_4979_MENU_ANCHOR,
+                CODEX_26721_4979_REACT_ANCHOR,
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
+    patched = bundle.read_text(encoding="utf-8")
+    assert "__codexDesktopModelProvidersPatchV7" in patched
+    assert "CodexCustomProviderPickerSection" in patched
+    assert "t=await codexPatchAppServerParams(e,t)" in patched
+    assert "e=await codexPatchAppServerParams(`thread/start`,e)" in patched
+
+
+def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
+    import codexier.desktop_patch_windows as windows
+
+    archive = tmp_path / "resources" / "app.asar"
+    archive.parent.mkdir()
+    archive.write_bytes(b"original")
+    config = tmp_path / "desktop-model-providers.json"
+    config.write_text(
+        '{"version": 2, "default_provider": "openai", "providers": '
+        '[{"id": "openai", "label": "OpenAI", "description": "", "models": []}]}'
+    )
+    source = "".join(
+        (
+            CODEX_26721_4979_CENTRAL_ANCHOR,
+            CODEX_26721_4979_REQUEST_ANCHOR,
+            CODEX_26721_4979_PREWARM_ANCHOR,
+            CODEX_26721_4979_PICKER_ANCHOR,
+            CODEX_26721_4979_MODELS_ANCHOR,
+            CODEX_26721_4979_MENU_ANCHOR,
+            CODEX_26721_4979_REACT_ANCHOR,
+            "async prewarmThreadStart(async sendConfigReadRequest("
+            "composer.intelligenceDropdown.tooltipmodelOptionsDisabled",
+        )
+    )
+    monkeypatch.setattr(windows, "asar_header_hash", lambda _archive: "valid")
+    monkeypatch.setattr(windows.shutil, "which", lambda _name: "npx")
+
+    def fake_run(command, **_kwargs):
+        if "extract" in command:
+            bundle = Path(command[-1]) / "webview" / "assets" / "app-initial.js"
+            bundle.parent.mkdir(parents=True)
+            bundle.write_text(source, encoding="utf-8")
+        else:
+            Path(command[-1]).write_bytes(
+                (Path(command[-2]) / "webview" / "assets" / "app-initial.js").read_bytes()
+            )
+
+    monkeypatch.setattr(windows, "run", fake_run)
+    windows.patch_windows_app(
+        archive, config, tmp_path / "backups", require_running=False, restart=False
+    )
+
+    patched = archive.read_text(encoding="utf-8")
+    assert "__codexDesktopModelProvidersPatchV7" in patched
+    assert "CodexCustomProviderPickerSection" in patched
 
 
 def test_failed_patch_command_names_the_stage_when_it_has_no_output(monkeypatch):

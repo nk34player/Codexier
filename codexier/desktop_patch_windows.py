@@ -189,6 +189,8 @@ def patch_windows_app(
             apply_supported_patch_variant(central, picker)
             if PATCH_MARKER.decode() not in central.read_text(encoding="utf-8"):
                 raise PatchError("Routing marker missing after patch.")
+            if "CodexCustomProviderPickerSection" not in picker.read_text(encoding="utf-8"):
+                raise PatchError("Provider picker missing after patch.")
             report(progress, "repack", "repacking the patched application archive")
             run(
                 [npx, "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_archive)],
