@@ -14,6 +14,9 @@ def test_root_launchers_reference_package_launcher():
     assert "python3" in linux
     assert "Press Enter to close" in command
     assert "pause" in batch.lower()
-    assert "mode con: cols=160 lines=50" in batch.lower()
+    # Do not force a fixed Windows console size. Windows Terminal can start
+    # with a different viewport and then leave stale Textual paint fragments
+    # until the window is resized.
+    assert "mode con:" not in batch.lower()
     assert "Press Enter to close" in linux
     assert "160t" in command
