@@ -174,7 +174,7 @@ def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: P
         "codexier-other",
     }
     assert set(config["profiles"]) == {"codexier"}
-    assert config["profiles"]["codexier"]["name"] == "codexier"
+    assert config["profiles"]["codexier"]["name"] == "Codexier"
     assert [model["slug"] for model in catalog["models"]] == [
         "gpt-5.2", "claude/opus 4.8", "other/model"
     ]
@@ -200,7 +200,7 @@ def test_sync_preserves_unrelated_session_like_configuration_tables(tmp_path: Pa
     config = tomllib.loads(config_path.read_text())
 
     assert set(config["profiles"]) == {"work", "codexier"}
-    assert config["profiles"]["codexier"]["name"] == "codexier"
+    assert config["profiles"]["codexier"]["name"] == "Codexier"
     assert config["model_providers"]["unrelated"] == {"name": "keep"}
     assert config["session_state"] == {"recent": ["thread-1", "thread-2"]}
     assert config["workspace_state"] == {"selected": "project-a"}

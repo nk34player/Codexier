@@ -38,11 +38,12 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV5"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV6"
 LEGACY_PATCH_MARKERS = (
     b"__codexDesktopModelProvidersPatchV2",
     b"__codexDesktopModelProvidersPatchV3",
     b"__codexDesktopModelProvidersPatchV4",
+    b"__codexDesktopModelProvidersPatchV5",
 )
 ASAR_PACKAGE = "@electron/asar@3.2.10"
 PRETTIER_PACKAGE = "prettier@3.6.2"
@@ -78,17 +79,8 @@ CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
 +        label: `ChatGPT / OpenAI`,
 +        description: `Uses your signed-in ChatGPT account`,
 +      },
-+      {
-+        id: `openrouter`,
-+        label: `OpenRouter`,
-+        description: `Uses the OpenRouter provider from config.toml`,
-+      },
 +    ],
-+    modelProviders: {
-+      "moonshotai/kimi-k3": `openrouter`,
-+      "x-ai/grok-4.5": `openrouter`,
-+      "anthropic/claude-fable-5": `openrouter`,
-+    },
++    modelProviders: {},
 +  };
 +}
 +function codexNormalizeProviderRoutingConfig(e) {
@@ -239,17 +231,8 @@ PICKER_DIFF = r"""@@ -10162,6 +10162,204 @@
 +        label: `ChatGPT / OpenAI`,
 +        description: `Uses your signed-in ChatGPT account`,
 +      },
-+      {
-+        id: `openrouter`,
-+        label: `OpenRouter`,
-+        description: `Uses the OpenRouter provider from config.toml`,
-+      },
 +    ],
-+    modelProviders: {
-+      "moonshotai/kimi-k3": `openrouter`,
-+      "x-ai/grok-4.5": `openrouter`,
-+      "anthropic/claude-fable-5": `openrouter`,
-+    },
++    modelProviders: {},
 +  };
 +}
 +function codexPickerNormalizeProviderRoutingConfig(e) {
@@ -545,17 +528,8 @@ PICKER_DIFF_26721 = r"""@@ -520849,7 +520849,7 @@
 +        label: `ChatGPT / OpenAI`,
 +        description: `Uses your signed-in ChatGPT account`,
 +      },
-+      {
-+        id: `openrouter`,
-+        label: `OpenRouter`,
-+        description: `Uses the OpenRouter provider from config.toml`,
-+      },
 +    ],
-+    modelProviders: {
-+      "moonshotai/kimi-k3": `openrouter`,
-+      "x-ai/grok-4.5": `openrouter`,
-+      "anthropic/claude-fable-5": `openrouter`,
-+    },
++    modelProviders: {},
 +  };
 +}
 +function codexPickerNormalizeProviderRoutingConfig(e) {
@@ -1159,8 +1133,22 @@ PICKER_DIFF_V4_TO_V5 = r"""@@ V4 picker
    let r = codexPickerProviderRoutingStateV4(),
 """
 
+CENTRAL_DIFF_V5_TO_V6 = r"""@@ V5 marker
+ function codexProviderRoutingStateV4() {
+-  return (window.__codexDesktopModelProvidersPatchV5 ??= {
++  return (window.__codexDesktopModelProvidersPatchV6 ??= {
+     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+   });
+"""
+
+PICKER_DIFF_V5_TO_V6 = r"""@@ V5 provider heading
+-      (0, wQ.jsx)(yz.Title, { children: `Provider` }),
++      (0, wQ.jsx)(yz.Title, { children: `Provider for new tasks` }),
+"""
+
 
 PATCH_VARIANTS: tuple[tuple[str, str, str], ...] = (
+    ("ChatGPT 26.721 V5 provider picker upgrade", CENTRAL_DIFF_V5_TO_V6, PICKER_DIFF_V5_TO_V6),
     ("ChatGPT 26.721 V4 safety upgrade", CENTRAL_DIFF_V4_TO_V5, PICKER_DIFF_V4_TO_V5),
     ("ChatGPT 26.721 provider-first picker", CENTRAL_DIFF_26721_V4, PICKER_DIFF_26721_V4),
 )

@@ -19,7 +19,7 @@ from .errors import ConfigError
 from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV5"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV6"
 
 
 @dataclass(frozen=True)

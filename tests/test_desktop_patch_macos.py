@@ -3,14 +3,28 @@ from pathlib import Path
 import pytest
 
 from codexier.desktop_patch_macos import (
+    CENTRAL_DIFF,
     CENTRAL_DIFF_V4_TO_V5,
+    CENTRAL_DIFF_V5_TO_V6,
+    PICKER_DIFF,
+    PICKER_DIFF_26721,
     PICKER_DIFF_V4_TO_V5,
+    PICKER_DIFF_V5_TO_V6,
     PATCH_VARIANTS,
     PatchError,
     render_unified_diff,
     validate_provider_config,
 )
 from codexier.patch_progress import MILESTONES
+
+
+def test_patch_fallbacks_contain_no_example_provider_models():
+    patch_source = "\n".join((CENTRAL_DIFF, PICKER_DIFF, PICKER_DIFF_26721)).casefold()
+
+    assert "openrouter" not in patch_source
+    assert "kimi" not in patch_source
+    assert "grok" not in patch_source
+    assert "claude-fable" not in patch_source
 
 
 def test_provider_first_desktop_config_accepts_duplicate_model_ids_across_providers():
@@ -103,6 +117,23 @@ async function codexPatchAppServerParams(e, t) {
     assert "thread/list" not in upgraded_central
     assert "thread/start" in upgraded_central
     assert upgraded_picker == picker
+
+
+def test_v5_upgrade_uses_the_provider_for_new_tasks_heading():
+    central = """function codexProviderRoutingStateV4() {
+  return (window.__codexDesktopModelProvidersPatchV5 ??= {
+    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
+}
+"""
+    picker = """      (0, wQ.jsx)(yz.Title, { children: `Provider` }),
+"""
+
+    upgraded_central = render_unified_diff(central, CENTRAL_DIFF_V5_TO_V6, "central.js")
+    upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V5_TO_V6, "picker.js")
+
+    assert "__codexDesktopModelProvidersPatchV6" in upgraded_central
+    assert "Provider for new tasks" in upgraded_picker
 
 
 def test_windows_rollback_restores_verified_archive_after_post_backup_failure(
