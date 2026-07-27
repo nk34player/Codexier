@@ -1,7 +1,7 @@
 # Codexier
 
-Codexier is a terminal UI for managing OpenAI-compatible providers and
-applying selected models to a Codex configuration.
+Codexier is a terminal UI for managing multiple OpenAI-compatible providers
+and syncing any models they expose to Codex.
 
 ## Quick start
 
@@ -28,20 +28,22 @@ chmod +x codexier.sh
 The launcher creates `.venv`, installs runtime dependencies when needed, and
 starts Codexier with the project environment.
 
-On first run, add a provider by entering its name, OpenAI-compatible base URL,
-and API key. Codexier discovers models through `/v1/models` and stores the
-catalog locally.
+On first run, add each provider with its name, OpenAI-compatible base URL, and
+API key. Codexier discovers models through `/v1/models`; any returned model ID
+can be selected, with no model-count limit.
 
-After selecting models, choose **Apply to Codex** to update the detected Codex
-configuration. Codexier writes every saved provider into the shared catalog
-and gives each provider its own Codex profile. On Linux, run the printed
-`codex --profile ...` command for the selected provider.
+Choose a provider as the default, then sync. Codexier writes every saved
+provider and selected model to one shared catalog, gives each provider its own
+Codex profile, and makes the selected provider the default. Duplicate model
+IDs across providers are rejected before anything is written. On Linux, run
+the printed `codex --profile ...` command for the selected default provider.
 
 `--patch-desktop` installs the source-validated native provider picker on
 macOS. It backs up `/Applications/ChatGPT.app`, stops it only if it was
 running, and reopens it afterwards. ChatGPT updates require re-patching.
 Windows Microsoft Store packages are MSIX-signed, so Codexier refuses unsafe
-in-place patching rather than damaging the installed app.
+in-place patching rather than damaging the installed app. Linux uses generated
+Codex CLI profiles rather than a desktop patch.
 
 ## Options
 
@@ -52,8 +54,8 @@ in-place patching rather than damaging the installed app.
 --yes              Skip confirmation prompts
 --no-restart       Do not prompt to restart Codex
 --restart          Attempt a safe Codex restart
---print-command    Print selected provider's Codex CLI command
---patch-desktop    Install the supported macOS desktop picker patch
+--print-command    Print the selected default provider's Codex CLI command
+--patch-desktop    Install the supported macOS desktop provider-picker patch
 --restore-desktop-patch BACKUP
                    Restore a desktop patch backup
 ```

@@ -24,7 +24,9 @@ from .desktop_patch import apply_desktop_patch, default_target, restore_desktop_
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Select Codex provider and live model catalog.")
+    parser = argparse.ArgumentParser(
+        description="Manage OpenAI-compatible providers and sync their models to Codex."
+    )
     parser.add_argument("--config", type=Path)
     parser.add_argument("--providers", type=Path)
     parser.add_argument("--dry-run", action="store_true")
@@ -32,9 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--restart", action="store_true")
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--print-command", action="store_true",
-                        help="Print selected provider's Codex CLI command after applying.")
+                        help="Print the selected default provider's Codex CLI command after syncing.")
     parser.add_argument("--patch-desktop", action="store_true",
-                        help="Install supported Windows/macOS desktop patch.")
+                        help="Install the supported macOS desktop provider-picker patch.")
     parser.add_argument("--restore-desktop-patch", type=Path, metavar="BACKUP",
                         help="Restore a desktop patch backup and exit.")
     return parser

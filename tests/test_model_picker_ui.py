@@ -36,6 +36,32 @@ def test_model_picker_keeps_saved_live_selection():
     assert "●" in screen._label("model-b")
 
 
+def test_model_picker_keeps_every_saved_live_selection_without_a_cap():
+    models = tuple(LiveModel(f"model-{index}", f"Model {index}") for index in range(6))
+    screen = ModelPickerScreen(
+        models,
+        "Compatible API",
+        selected_ids=tuple(model.id for model in models),
+    )
+    assert screen.selected == [model.id for model in models]
+
+
+def test_multi_provider_copy_describes_default_and_full_catalog_sync():
+    copy = "\n".join(
+        constant
+        for compose in (
+            ProviderManagerApp.compose,
+            ApplyScreen.compose,
+            ModelPickerScreen.compose,
+        )
+        for constant in compose.__code__.co_consts
+        if isinstance(constant, str)
+    )
+    assert "Set default & sync" in copy
+    assert "Sync all providers to Codex" in copy
+    assert "no selection limit" in copy
+
+
 def _visible_actions(screen) -> set[str]:
     return {
         binding.action

@@ -70,7 +70,7 @@ class ProviderApp(App[Provider | None]):
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
     """
-    BINDINGS = [Binding("q", "quit", "Quit"), Binding("enter", "choose", "Select")]
+    BINDINGS = [Binding("q", "quit", "Quit"), Binding("enter", "choose", "Set default")]
 
     def __init__(self, providers: Sequence[Provider]):
         super().__init__()
@@ -79,14 +79,21 @@ class ProviderApp(App[Provider | None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="shell"):
-            yield Static("CODEXIER  /  PROVIDER SWITCHBOARD", id="brand")
+            yield Static(
+                "CODEXIER  /  PROVIDER CATALOG\n"
+                "Choose the OpenAI-compatible provider to use as the default.",
+                id="brand",
+            )
             yield ListView(id="providers")
         yield Footer()
 
     def on_mount(self) -> None:
         view = self.query_one("#providers", ListView)
         for provider in self.providers:
-            view.append(ListItem(Label(f"◆  {provider.name}\n   [dim]{provider.base_url}[/dim]"), id=widget_id("provider", provider.id)))
+            view.append(ListItem(Label(
+                f"◆  {provider.name}\n"
+                f"   [dim]{provider.base_url} · {len(provider.models)} saved models[/dim]"
+            ), id=widget_id("provider", provider.id)))
 
     def action_choose(self) -> None:
         item = self.query_one("#providers", ListView).highlighted_child
@@ -123,7 +130,7 @@ class CodexierApp(App[TuiResult | None]):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("space", "toggle_model", "Toggle model"),
-        Binding("enter", "apply_models", "Apply profile"),
+        Binding("enter", "apply_models", "Save models"),
     ]
 
     def __init__(self, provider: Provider):
@@ -135,14 +142,19 @@ class CodexierApp(App[TuiResult | None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="shell"):
-            yield Static("CODEXIER  /  MODEL CATALOG", id="brand")
+            yield Static("CODEXIER  /  AVAILABLE MODELS", id="brand")
             yield Static(f"[bold]{self.provider.name}[/bold]  ·  {self.provider.base_url}", id="subtitle")
             with Horizontal(id="content"):
                 yield ListView(id="models")
                 with Vertical(id="side"):
                     yield Label("SELECTED", classes="muted")
                     yield Static("0", id="count")
-                    yield Static("Select one or more models.\nModels are fetched live; unavailable providers stop safely.", id="hint", classes="muted")
+                    yield Static(
+                        "Select any returned model; there is no selection limit.\n"
+                        "Models are fetched from this OpenAI-compatible provider.",
+                        id="hint",
+                        classes="muted",
+                    )
                     yield Static("", id="error")
                     yield Button("Continue  ›", id="continue", variant="primary")
         yield Footer()
@@ -155,7 +167,7 @@ class CodexierApp(App[TuiResult | None]):
         try:
             self.live_models = await self._fetch_async()
         except ModelFetchError as exc:
-            self.query_one("#error", Static).update(f"LIVE FETCH FAILED\n{exc}")
+            self.query_one("#error", Static).update(f"MODEL FETCH FAILED\n{exc}")
             return
         self.state = SelectionState(
             [model.id for model in self.live_models],

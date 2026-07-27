@@ -112,16 +112,20 @@ class SetupApp(App[bool]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         with Vertical(id="shell"):
-            yield Static("FIRST RUN  /  ADD PROVIDER", id="title")
-            yield Static("No providers.json found. Add provider, then fetch live models.\nTab moves between fields · Enter submits · Ctrl+C quits", id="intro")
+            yield Static("FIRST RUN  /  CREATE PROVIDER CATALOG", id="title")
+            yield Static(
+                "Add an OpenAI-compatible provider, then choose from its live /v1/models list.\n"
+                "Tab moves between fields · Enter submits · Ctrl+C quits",
+                id="intro",
+            )
             yield Label("PROVIDER NAME", classes="field-label")
             yield Input(placeholder="Provider name", id="name")
-            yield Label("BASE URL", classes="field-label")
-            yield Input(placeholder="Base URL (https://.../v1)", id="url")
+            yield Label("OPENAI-COMPATIBLE BASE URL", classes="field-label")
+            yield Input(placeholder="https://api.example.com/v1", id="url")
             yield Label("API KEY", classes="field-label")
             yield Input(placeholder="API key", password=True, id="key")
-            yield Button("Fetch live models  ›", id="save", variant="primary")
-            yield Static("Enter provider details, then press button or Enter in API-key field.", id="status")
+            yield Button("Fetch available models  ›", id="save", variant="primary")
+            yield Static("Enter provider details, then fetch its available models.", id="status")
         yield Footer()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -162,7 +166,7 @@ class SetupApp(App[bool]):
             status.update(str(exc))
             status.add_class("error")
             return
-        status.update("Fetching live models …")
+        status.update("Fetching available models …")
         self.run_worker(self._fetch_and_save(name, url, key), exclusive=True)
 
     async def _fetch_and_save(self, name: str, url: str, key: str) -> None:
@@ -175,7 +179,7 @@ class SetupApp(App[bool]):
             status.update(f"Setup failed: {exc}")
             status.add_class("error")
             return
-        status.update(f"Saved {provider.name} with {len(provider.models)} live models. Starting …")
+        status.update(f"Saved {provider.name} with {len(provider.models)} models. Starting …")
         self.exit(True)
 
 
@@ -220,16 +224,16 @@ class ProviderManagerApp(App[Provider | None]):
         yield Header(show_clock=False)
         with Vertical(id="shell"):
             yield Static(
-                "CODEXIER PROVIDERS\n"
-                "Click once to select a provider. Press Enter or double-click to open the apply screen.",
+                "CODEXIER  /  PROVIDER CATALOG\n"
+                "Manage OpenAI-compatible providers. Select one as the default, then sync every saved provider and model to Codex.",
                 id="brand",
             )
             yield ProviderListView(id="providers")
             with Horizontal(id="actions"):
-                yield Button("Use selected  ›", id="use", variant="primary")
-                yield Button("＋ Add", id="add")
-                yield Button("✎ Edit", id="edit")
-                yield Button("× Delete", id="delete", variant="error")
+                yield Button("Set default & sync  ›", id="use", variant="primary")
+                yield Button("＋ Add provider", id="add")
+                yield Button("✎ Edit provider", id="edit")
+                yield Button("× Delete provider", id="delete", variant="error")
                 yield Button("Back / Quit", id="back")
             yield Static("Selected provider: none", id="status")
         yield Footer()
@@ -252,7 +256,7 @@ class ProviderManagerApp(App[Provider | None]):
             self._update_selected_status(self.providers[0])
 
     def _provider_label(self, provider: Provider) -> Label:
-        marker = "● APPLIED" if provider.id == self.applied_id else "○"
+        marker = "● DEFAULT" if provider.id == self.applied_id else "○ AVAILABLE"
         model_names = ", ".join(model.label for model in provider.models) or "no models selected"
         label = Label(
             f"{marker}  ◆  {provider.name}\n"
@@ -280,9 +284,11 @@ class ProviderManagerApp(App[Provider | None]):
             # being dismissed. Ignore transient events until status exists.
             return
         if provider is None:
-            status.update("Selected provider: none")
+            status.update("Choose a provider to make it the default after sync.")
         else:
-            status.update(f"Selected provider: {provider.name} · {len(provider.models)} saved models")
+            status.update(
+                f"Default after sync: {provider.name} · {len(provider.models)} saved models"
+            )
 
     def action_add(self) -> None:
             self.push_screen(ProviderFormScreen(self.catalog_path, None), self._form_finished)
@@ -292,7 +298,9 @@ class ProviderManagerApp(App[Provider | None]):
 
     def _settings_finished(self, changed: bool | None) -> None:
         if changed:
-            self.query_one("#status", Static).update("Settings saved. Apply a provider to update Codex profile.")
+            self.query_one("#status", Static).update(
+                "Settings saved. Set a default provider and sync the catalog to update Codex."
+            )
 
     def action_edit(self) -> None:
         provider = self._selected()
@@ -360,7 +368,9 @@ class ProviderManagerApp(App[Provider | None]):
         if not any(item.id == provider.id for item in self.providers):
             self.providers += (provider,)
         self.run_worker(self._render_providers(), exclusive=True)
-        self.query_one("#status", Static).update(f"Saved {provider.name}. Select it and press Enter to continue.")
+        self.query_one("#status", Static).update(
+            f"Saved {provider.name}. Select a default provider, then sync all saved providers."
+        )
 
 
 class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
@@ -609,22 +619,22 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
-            yield Static("PROVIDER  /  ADD OR EDIT", id="title")
+            yield Static("OPENAI-COMPATIBLE PROVIDER  /  ADD OR EDIT", id="title")
             yield Static(
-                "Enter the provider connection details. Codexier will fetch its live model list "
+                "Enter an OpenAI-compatible API base URL and key. Codexier fetches /v1/models "
                 "before you choose which models to save.",
                 id="intro",
             )
             yield Label("PROVIDER NAME", classes="field-label")
             yield Input(placeholder="Provider name", id="name")
-            yield Label("BASE URL", classes="field-label")
-            yield Input(placeholder="Base URL (https://.../v1)", id="url")
+            yield Label("OPENAI-COMPATIBLE BASE URL", classes="field-label")
+            yield Input(placeholder="https://api.example.com/v1", id="url")
             yield Label("API KEY", classes="field-label")
             yield Input(placeholder="API key", password=True, id="key")
             with Horizontal(id="form-actions"):
-                yield Button("Fetch live models  ›", id="save", variant="primary")
+                yield Button("Fetch available models  ›", id="save", variant="primary")
                 yield Button("Back to main menu", id="back")
-            yield Static("Enter advances fields · Esc goes back", id="status")
+            yield Static("Enter advances fields · Esc returns to the provider catalog", id="status")
         yield Footer()
 
     def action_cancel(self) -> None:
@@ -674,7 +684,7 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
             status.update(str(exc))
             status.add_class("error")
             return
-        status.update("Fetching live models …")
+        status.update("Fetching available models …")
         self.run_worker(self._fetch_and_save(name, url, key), exclusive=True)
 
     async def _fetch_and_save(self, name: str, url: str, key: str) -> None:
@@ -742,7 +752,7 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
     """
     BINDINGS = [
         ("space", "toggle", "Toggle model"),
-        Binding("enter", "save", "Save provider", priority=True),
+        Binding("enter", "save", "Save selected models", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
@@ -752,29 +762,29 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
         self.models = tuple(models)
         self.provider_name = provider_name
         live_ids = {model.id for model in self.models}
-        self.selected = [model_id for model_id in selected_ids if model_id in live_ids][:5]
+        self.selected = [model_id for model_id in selected_ids if model_id in live_ids]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
-            yield Static(f"LIVE MODELS  /  {self.provider_name}")
+            yield Static(f"AVAILABLE MODELS  /  {self.provider_name}")
             yield Static(
-                "Select models to make available through Codexier. "
-                "Press Space to toggle a model, then Enter to save.",
+                "Any model returned by this OpenAI-compatible API can be saved. "
+                "Select one or more models; there is no selection limit.",
                 id="intro",
             )
-            yield Static("LOADING LIVE MODELS …", id="count")
+            yield Static("LOADING AVAILABLE MODELS …", id="count")
             yield ListView(id="models")
             with Horizontal(id="actions"):
-                yield Button("Save provider  ›", id="save", variant="primary")
-                yield Button("Back to main menu", id="back")
+                yield Button("Save selected models  ›", id="save", variant="primary")
+                yield Button("Back to provider catalog", id="back")
         yield Footer()
 
     def on_mount(self) -> None:
         view = self.query_one("#models", ListView)
         view.focus()
         if not self.models:
-            view.append(ListItem(Label("No live models returned by provider."), id="no-models"))
-            self.query_one("#count", Static).update("NO MODELS AVAILABLE")
+            view.append(ListItem(Label("No models returned by this provider."), id="no-models"))
+            self.query_one("#count", Static).update("NO AVAILABLE MODELS")
             self.query_one("#save", Button).disabled = True
             return
         for model in self.models:
@@ -816,7 +826,7 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
         if self.selected:
             self.dismiss(tuple(self.selected))
         else:
-            self.query_one("#count", Static).update("SELECTED  0 / 5   — choose at least 1 model")
+            self.query_one("#count", Static).update("SELECTED  0   (minimum 1)")
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -857,21 +867,22 @@ class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
-            yield Static("APPLY CODEX PROFILE")
+            yield Static("SYNC CODEXIER PROVIDER CATALOG")
             yield Static(
-                "Review the selected provider and models. Applying writes the Codex profile "
-                "and model catalog, then Codex can use this configuration.",
+                "Sync every saved OpenAI-compatible provider and model to Codex. "
+                "The selected provider becomes the default profile and desktop-picker provider.",
                 id="intro",
             )
             yield Static(
-                f"Provider  {self.provider.name}\n"
+                f"Default provider  {self.provider.name}\n"
                 f"Base URL  {self.settings.base_url}\n"
                 f"API key   {mask_api_key(self.settings.api_key)}\n"
-                f"Models    {', '.join(self.settings.models)}\n"
+                f"Default models    {', '.join(self.settings.models)}\n"
+                "Sync scope        All saved providers and models\n"
                 f"Target    {self.target_path}", id="summary"
             )
-            yield Button("Apply configuration  ›", id="apply", variant="primary")
-            yield Button("Back to main menu", id="cancel")
+            yield Button("Sync all providers to Codex  ›", id="apply", variant="primary")
+            yield Button("Back to provider catalog", id="cancel")
         yield Footer()
 
     def on_mount(self) -> None:

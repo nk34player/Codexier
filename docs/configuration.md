@@ -14,4 +14,8 @@ multiple Codex configuration files.
 
 Provider catalog entries contain `id`, `name`, `base_url`, `api_key`, `models`,
 and optional `presets`. Model IDs are written to Codex; labels are display-only.
-At most five models may be selected.
+Any model returned by an OpenAI-compatible provider may be selected; there is
+no model-count limit. Applying syncs every saved provider into one shared model
+catalog, creates one Codex profile per provider, and sets the selected provider
+as the default. Duplicate model IDs across providers are rejected before files
+are written.
