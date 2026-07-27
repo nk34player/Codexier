@@ -16,9 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .errors import ConfigError
+from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV4"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV5"
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class DesktopPatchStatus:
     patched: bool
     supported: bool
     message: str
+    skipped: bool = False
 
 
 def default_target(platform: str | None = None) -> DesktopPatchTarget:
@@ -156,15 +158,52 @@ def backup_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Path:
     return backup
 
 
-def apply_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> DesktopPatchStatus:
+def apply_desktop_patch(
+    target: DesktopPatchTarget,
+    backup_root: Path,
+    progress: PatchProgress | None = None,
+) -> DesktopPatchStatus:
+    """Patch a supported desktop archive without risking a successful sync.
+
+    The caller receives safe skip statuses for signed packages, already-patched
+    installs, and apps that cannot close gracefully.  Expected patch failures
+    still raise ``ConfigError`` with the failed milestone for clear remediation.
+    """
+    last_stage = "detection"
+
+    def emit(percent: int, detail: str) -> None:
+        nonlocal last_stage
+        # Recovery emits replacement/verification milestones too; retain the
+        # original failing stage so the user receives useful remediation.
+        if "rolling back" not in detail and "restored original" not in detail:
+            last_stage = detail.split(":", 1)[0]
+        if progress is not None:
+            progress(percent, detail)
+
+    report(emit, "detection", f"inspecting {target.archive_path}")
     status = patch_status(target)
     if status.patched:
+        report(emit, "completion", "already patched; app.asar was not modified")
         return status
+    if target.platform == "windows" and target.package_type == "msix":
+        skipped = DesktopPatchStatus(
+            target,
+            False,
+            False,
+            "Desktop patch skipped: Microsoft Store/MSIX package detected. "
+            "Codexier will not modify signed package files.",
+            True,
+        )
+        report(emit, "completion", skipped.message)
+        return skipped
+    if not status.supported:
+        raise ConfigError(status.message)
     if target.platform == "darwin":
         from .desktop_patch_macos import (
+            PatchSkipped,
             find_target_app_processes,
+            gracefully_close_target_app_processes,
             patch_app,
-            stop_target_app_processes,
         )
 
         app = target.archive_path.parents[2]
@@ -174,33 +213,48 @@ def apply_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Deskto
         if not config.is_file():
             raise ConfigError("Apply a provider before installing the desktop patch.")
         try:
+            report(emit, "validation", "validated the provider configuration and app archive")
             was_running = bool(find_target_app_processes(app))
-            stop_target_app_processes(app, False)
-            patch_app(app, config, backup_root, False)
+            report(emit, "process stop", "requesting a graceful close of the desktop app")
+            gracefully_close_target_app_processes(app)
+            patch_app(app, config, backup_root, False, emit)
             if was_running:
+                report(emit, "restart", "reopening the desktop app")
                 subprocess.Popen(["open", "-a", "ChatGPT"])
+            else:
+                report(emit, "restart", "desktop app was already closed; no restart was needed")
+        except PatchSkipped as exc:
+            skipped = DesktopPatchStatus(target, False, True, str(exc), True)
+            report(emit, "completion", skipped.message)
+            return skipped
         except Exception as exc:
-            raise ConfigError(str(exc)) from exc
-        return patch_status(target)
+            raise ConfigError(f"Desktop patch failed during {last_stage}: {exc}") from exc
+        final_status = patch_status(target)
+        if not final_status.patched:
+            raise ConfigError("Desktop patch verification did not find the expected marker.")
+        report(emit, "completion", "desktop patch installed successfully")
+        return final_status
     if target.platform == "windows":
-        if target.package_type == "msix":
-            raise ConfigError(
-                "Windows Microsoft Store/MSIX packages are signed. Codexier "
-                "refuses to modify app.asar; use an unpackaged desktop install."
-            )
         from .codex_profile import codex_home
+        from .desktop_patch_macos import PatchSkipped
         from .desktop_patch_windows import PatchError, patch_windows_app
 
         config = codex_home() / "desktop-model-providers.json"
         if not config.is_file():
             raise ConfigError("Apply enabled providers before installing the desktop patch.")
         try:
-            patch_windows_app(target.archive_path, config, backup_root)
+            patch_windows_app(target.archive_path, config, backup_root, emit)
+        except PatchSkipped as exc:
+            skipped = DesktopPatchStatus(target, False, True, str(exc), True)
+            report(emit, "completion", skipped.message)
+            return skipped
         except PatchError as exc:
-            raise ConfigError(str(exc)) from exc
-        return patch_status(target)
-    if not status.supported:
-        raise ConfigError(status.message)
+            raise ConfigError(f"Desktop patch failed during {last_stage}: {exc}") from exc
+        final_status = patch_status(target)
+        if not final_status.patched:
+            raise ConfigError("Desktop patch verification did not find the expected marker.")
+        report(emit, "completion", "desktop patch installed successfully")
+        return final_status
     raise ConfigError(status.message)
 
 

@@ -23,6 +23,7 @@ from .desktop_patch_macos import (
     PATCH_MARKER,
     PRETTIER_PACKAGE,
     PatchError,
+    PatchSkipped,
     apply_supported_patch_variant,
     asar_header_hash,
     contains_marker,
@@ -30,6 +31,7 @@ from .desktop_patch_macos import (
     unique_candidate,
     validate_provider_config,
 )
+from .patch_progress import PatchProgress, report
 from .process_manager import ChatGPTProcess, detect_chatgpt_processes
 
 
@@ -70,20 +72,36 @@ def _target_processes(archive: Path) -> tuple[ChatGPTProcess, ...]:
     )
 
 
-def _stop_target_processes(processes: tuple[ChatGPTProcess, ...]) -> str | None:
+def _gracefully_close_target_processes(
+    processes: tuple[ChatGPTProcess, ...]
+) -> str | None:
+    """Close windows without taskkill; preserve unsaved desktop state on failure."""
     if not processes:
         return None
     executable = processes[0].executable
     for process in processes:
         try:
             subprocess.run(
-                ["taskkill.exe", "/PID", str(process.pid), "/T"],
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    (
+                        f"$p = Get-Process -Id {process.pid} "
+                        "-ErrorAction SilentlyContinue; "
+                        "if ($null -ne $p) { [void]$p.CloseMainWindow() }"
+                    ),
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
             )
         except OSError as exc:
-            raise PatchError(f"Could not stop the target desktop app: {exc}") from exc
+            raise PatchSkipped(
+                f"Desktop patch skipped: could not request a graceful app close ({exc}). "
+                "Close ChatGPT manually, then sync enabled providers again."
+            ) from exc
     deadline = time.monotonic() + 8.0
     pending = {process.pid for process in processes}
     while pending and time.monotonic() < deadline:
@@ -95,13 +113,19 @@ def _stop_target_processes(processes: tuple[ChatGPTProcess, ...]) -> str | None:
                 text=True,
             )
         except OSError as exc:
-            raise PatchError(f"Could not verify the desktop app stopped: {exc}") from exc
+            raise PatchSkipped(
+                f"Desktop patch skipped: could not verify the app closed ({exc}). "
+                "Close ChatGPT manually, then sync enabled providers again."
+            ) from exc
         pending = {pid for pid in pending if str(pid) in result.stdout}
         if pending:
             time.sleep(0.1)
     if pending:
         ids = ", ".join(str(pid) for pid in sorted(pending))
-        raise PatchError(f"Target desktop app did not stop (PIDs: {ids}).")
+        raise PatchSkipped(
+            "Desktop patch skipped: ChatGPT is still running "
+            f"(PIDs: {ids}). Close it normally, then sync enabled providers again."
+        )
     return executable
 
 
@@ -136,7 +160,10 @@ def _atomic_replace(source: Path, destination: Path) -> None:
 
 
 def patch_windows_app(
-    archive: Path, config: Path, backup_root: Path
+    archive: Path,
+    config: Path,
+    backup_root: Path,
+    progress: PatchProgress | None = None,
 ) -> WindowsPatchResult:
     """Patch a verified unpackaged archive and recover automatically on error."""
     if not archive.is_file():
@@ -146,6 +173,7 @@ def patch_windows_app(
     except (OSError, ValueError) as exc:
         raise PatchError(f"Could not read desktop provider configuration: {exc}") from exc
     validate_provider_config(provider_config)
+    report(progress, "validation", "validated the provider configuration and archive")
     if contains_marker(archive):
         return WindowsPatchResult(backup_root, False)
     # Reject truncated or malformed archives before process shutdown or backup.
@@ -153,58 +181,71 @@ def patch_windows_app(
     if shutil.which("npx.cmd") is None and shutil.which("npx") is None:
         raise PatchError("npx is required. Install Node.js, then run this command again.")
 
-    executable = _stop_target_processes(_target_processes(archive))
-    with tempfile.TemporaryDirectory(prefix="codexier-windows-patch-") as temporary:
-        work = Path(temporary)
-        extracted = work / "app"
-        patched_archive = work / "app.asar"
-        npx = _npx_command()
-        run(
-            [npx, "--yes", ASAR_PACKAGE, "extract", str(archive), str(extracted)],
-            label="Extracting Windows application resources",
-        )
-        assets = extracted / "webview" / "assets"
-        if not assets.is_dir():
-            raise PatchError("Extracted app has no webview/assets directory.")
-        central = unique_candidate(
-            assets,
-            ("async prewarmThreadStart(", "async sendConfigReadRequest("),
-            "App Server client",
-        )
-        picker = unique_candidate(
-            assets,
-            ("composer.intelligenceDropdown.tooltip", "modelOptionsDisabled"),
-            "model picker",
-        )
-        patch_targets = list(dict.fromkeys((central, picker)))
-        run(
-            [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
-            label="Preparing the JavaScript bundles",
-        )
-        apply_supported_patch_variant(central, picker)
-        if PATCH_MARKER.decode() not in central.read_text(encoding="utf-8"):
-            raise PatchError("Routing marker missing after patch.")
-        run(
-            [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
-            label="Formatting patched JavaScript",
-        )
-        run(
-            [npx, "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_archive)],
-            label="Packing patched Windows application resources",
-        )
-        if not contains_marker(patched_archive):
-            raise PatchError("Packed Windows app.asar is missing the patch marker.")
+    report(progress, "process stop", "requesting a graceful close of the desktop app")
+    executable = _gracefully_close_target_processes(_target_processes(archive))
+    report(progress, "backup", "creating a verified backup of app.asar")
+    backup = _make_backup(archive, backup_root)
+    try:
+        with tempfile.TemporaryDirectory(prefix="codexier-windows-patch-") as temporary:
+            work = Path(temporary)
+            extracted = work / "app"
+            patched_archive = work / "app.asar"
+            npx = _npx_command()
+            report(progress, "extraction", "extracting application resources")
+            run(
+                [npx, "--yes", ASAR_PACKAGE, "extract", str(archive), str(extracted)],
+                label="Extracting Windows application resources",
+            )
+            assets = extracted / "webview" / "assets"
+            if not assets.is_dir():
+                raise PatchError("Extracted app has no webview/assets directory.")
+            report(progress, "bundle matching", "matching the supported application bundle layout")
+            central = unique_candidate(
+                assets,
+                ("async prewarmThreadStart(", "async sendConfigReadRequest("),
+                "App Server client",
+            )
+            picker = unique_candidate(
+                assets,
+                ("composer.intelligenceDropdown.tooltip", "modelOptionsDisabled"),
+                "model picker",
+            )
+            patch_targets = list(dict.fromkeys((central, picker)))
+            report(progress, "source patch", "applying provider-first model routing")
+            run(
+                [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
+                label="Preparing the JavaScript bundles",
+            )
+            apply_supported_patch_variant(central, picker)
+            if PATCH_MARKER.decode() not in central.read_text(encoding="utf-8"):
+                raise PatchError("Routing marker missing after patch.")
+            run(
+                [npx, "--yes", PRETTIER_PACKAGE, "--write", *(str(path) for path in patch_targets)],
+                label="Formatting patched JavaScript",
+            )
+            report(progress, "repack", "repacking the patched application archive")
+            run(
+                [npx, "--yes", ASAR_PACKAGE, "pack", str(extracted), str(patched_archive)],
+                label="Packing patched Windows application resources",
+            )
+            if not contains_marker(patched_archive):
+                raise PatchError("Packed Windows app.asar is missing the patch marker.")
 
-        backup = _make_backup(archive, backup_root)
-        try:
+            report(progress, "atomic replacement", "atomically replacing app.asar")
             _atomic_replace(patched_archive, archive)
+            report(progress, "verification", "verifying the installed app.asar")
             if not contains_marker(archive):
                 raise PatchError("Installed Windows app.asar is missing the patch marker.")
-        except Exception:
-            _atomic_replace(backup / "app.asar", archive)
-            raise
+    except Exception:
+        report(progress, "atomic replacement", "rolling back from the verified backup")
+        _atomic_replace(backup / "app.asar", archive)
+        report(progress, "verification", "verifying the restored original archive")
+        if archive.read_bytes() != (backup / "app.asar").read_bytes():
+            raise PatchError(f"Rollback verification failed; backup remains at: {backup}")
+        raise
 
     restarted = False
+    report(progress, "restart", "reopening the desktop app when it was previously running")
     if executable:
         try:
             subprocess.Popen([executable])

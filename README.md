@@ -39,13 +39,17 @@ create separate Codex profiles. Existing catalogs that predate toggles retain
 their previous Codexier fallback as enabled when it can be matched safely.
 On Linux, run `codex --profile codexier`.
 
-`--patch-desktop` installs the source-validated provider-first picker on
-macOS and unpackaged Windows Electron installs. It verifies the supported
-bundle layout, creates a backup, stops the target app only when needed, and
-reopens it after a successful patch. ChatGPT updates require re-patching.
-Windows Microsoft Store packages are MSIX-signed, so Codexier refuses unsafe
-in-place patching rather than damaging the installed app. Linux uses the
-normal Codexier profile rather than a desktop patch.
+After every successful sync, Codexier automatically checks the desktop app on
+macOS and unpackaged Windows Electron installs. It displays percentage
+milestones and an expandable terminal log while it validates the supported
+bundle, asks the app to close gracefully, backs it up, patches it, verifies
+it, and reopens it only if it was already running. If the app will not close,
+patching is safely skipped—no process is force-closed and no app data is
+touched. Already-patched installs report success without changing `app.asar`.
+ChatGPT updates require re-patching. Windows Microsoft Store/MSIX packages
+remain untouched because they are signed; Codexier reports that safe skip.
+Patching never rolls back a successful provider sync. Linux uses the normal
+`codexier` profile rather than a desktop patch.
 
 ## Options
 
@@ -57,7 +61,7 @@ normal Codexier profile rather than a desktop patch.
 --no-restart       Do not prompt to restart Codex
 --restart          Attempt a safe Codex restart
 --print-command    Print the normal Codexier CLI command
---patch-desktop    Install the supported macOS/Windows desktop provider-picker patch
+--patch-desktop    Also request desktop patch handling (automatic on macOS/Windows)
 --restore-desktop-patch BACKUP
                    Restore a desktop patch backup
 ```

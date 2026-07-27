@@ -13,12 +13,12 @@ import datetime as dt
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import plistlib
 import re
 import shlex
 import shutil
-import signal
 import struct
 import subprocess
 import sys
@@ -28,15 +28,21 @@ import time
 from typing import Any, NoReturn
 
 try:
+    from .patch_progress import PatchProgress, report
+except ImportError:  # Support running this installer directly as a script.
+    from patch_progress import PatchProgress, report
+
+try:
     import pwd
 except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV4"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV5"
 LEGACY_PATCH_MARKERS = (
     b"__codexDesktopModelProvidersPatchV2",
     b"__codexDesktopModelProvidersPatchV3",
+    b"__codexDesktopModelProvidersPatchV4",
 )
 ASAR_PACKAGE = "@electron/asar@3.2.10"
 PRETTIER_PACKAGE = "prettier@3.6.2"
@@ -192,10 +198,6 @@ CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
 +  return n === `auto` ? (t.modelProviders[e?.model] ?? t.defaultProvider) : n;
 +}
 +async function codexPatchAppServerParams(e, t) {
-+  if (e === `thread/list`) {
-+    let e = t != null && typeof t === `object` ? t : {};
-+    return e.modelProviders == null ? { ...e, modelProviders: [] } : e;
-+  }
 +  if (e === `thread/start` && t != null && typeof t === `object`)
 +    return t.modelProvider == null
 +      ? { ...t, modelProvider: await codexProviderForThreadStart(t) }
@@ -957,7 +959,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV4 ??= {
+  return (window.__codexDesktopModelProvidersPatchV5 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -981,10 +983,6 @@ async function codexLoadProviderRoutingConfigV4(e = !1) {
   })(), t.promise);
 }
 async function codexPatchAppServerParams(e, t) {
-  if (e === `thread/list`) {
-    let e = t != null && typeof t === `object` ? t : {};
-    return e.modelProviders == null ? { ...e, modelProviders: [] } : e;
-  }
   if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
   let n = await codexLoadProviderRoutingConfigV4(!0), r;
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
@@ -1138,14 +1136,42 @@ PICKER_DIFF_26721_V4 = _insert_hunk_before(
     ),
 )
 
+CENTRAL_DIFF_V4_TO_V5 = r"""@@ V4 marker
+ function codexProviderRoutingStateV4() {
+-  return (window.__codexDesktopModelProvidersPatchV4 ??= {
++  return (window.__codexDesktopModelProvidersPatchV5 ??= {
+     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+   });
+@@ V4 thread safety
+ async function codexPatchAppServerParams(e, t) {
+-  if (e === `thread/list`) {
+-    let e = t != null && typeof t === `object` ? t : {};
+-    return e.modelProviders == null ? { ...e, modelProviders: [] } : e;
+-  }
+   if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
+"""
+
+# The V4 picker already has the provider-first UI.  The context-only hunk
+# proves it is the expected matching bundle while the central bundle removes
+# the unsafe V4 thread/list rewrite and records the V5 marker.
+PICKER_DIFF_V4_TO_V5 = r"""@@ V4 picker
+ function CodexCustomProviderPickerSection() {
+   let r = codexPickerProviderRoutingStateV4(),
+"""
+
 
 PATCH_VARIANTS: tuple[tuple[str, str, str], ...] = (
+    ("ChatGPT 26.721 V4 safety upgrade", CENTRAL_DIFF_V4_TO_V5, PICKER_DIFF_V4_TO_V5),
     ("ChatGPT 26.721 provider-first picker", CENTRAL_DIFF_26721_V4, PICKER_DIFF_26721_V4),
 )
 
 
 class PatchError(RuntimeError):
     """A safe, expected patch failure."""
+
+
+class PatchSkipped(PatchError):
+    """A safe patch skip that leaves the desktop application untouched."""
 
 
 def colors_enabled(stream: Any = sys.stdout) -> bool:
@@ -1460,11 +1486,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replace the provider-routing JSON with the built-in template",
     )
-    parser.add_argument(
-        "--allow-running",
-        action="store_true",
-        help="Do not close target-app processes before patching (unsafe)",
-    )
     return parser.parse_args()
 
 
@@ -1661,16 +1682,6 @@ def find_target_app_processes(app: Path) -> list[tuple[int, str]]:
     return matches
 
 
-def signal_processes(processes: list[tuple[int, str]], signal_number: int) -> None:
-    for pid, _command in processes:
-        try:
-            os.kill(pid, signal_number)
-        except ProcessLookupError:
-            continue
-        except PermissionError as exc:
-            raise PatchError(f"Permission denied while stopping process {pid}") from exc
-
-
 def wait_for_app_processes_to_exit(app: Path, timeout: float) -> list[tuple[int, str]]:
     deadline = time.monotonic() + timeout
     remaining = find_target_app_processes(app)
@@ -1681,62 +1692,61 @@ def wait_for_app_processes_to_exit(app: Path, timeout: float) -> list[tuple[int,
 
 
 def stop_target_app_processes(app: Path, allow_running: bool) -> None:
-    executable = app / "Contents" / "MacOS" / "ChatGPT"
-    if not executable.is_file():
-        raise PatchError(f"Cannot identify the target ChatGPT app executable: {executable}")
+    """Compatibility wrapper that no longer force-closes desktop processes."""
+    if allow_running:
+        raise PatchSkipped(
+            "Patching while ChatGPT is running is no longer supported. "
+            "Close it normally, then run the patch again."
+        )
+    gracefully_close_target_app_processes(app)
 
+
+def gracefully_close_target_app_processes(app: Path) -> bool:
+    """Ask the app to quit and skip safely if it remains open.
+
+    Unlike the standalone legacy installer, automatic sync never sends a
+    signal or force-kills a desktop process.  This protects unsaved work and
+    keeps the app archive untouched when a graceful close is not possible.
+    """
     processes = find_target_app_processes(app)
     if not processes:
-        terminal_status(
-            "PROCESS",
-            "The target ChatGPT app is not running.",
-            "32",
-            detail=app,
-        )
-        return
+        terminal_status("PROCESS", "The target ChatGPT app is not running.", "32", detail=app)
+        return False
 
     pid_summary = ", ".join(str(pid) for pid, _command in processes)
-    if allow_running:
-        terminal_status(
-            "WARNING",
-            "Target-app processes are running, but automatic closing was disabled.",
-            "33",
-            detail=f"PIDs: {pid_summary}",
-        )
-        return
-
     terminal_status(
         "CLOSE",
-        f"Closing {len(processes)} process(es) launched from the target app bundle.",
+        "Requesting a graceful close of the target ChatGPT app.",
         "35",
         detail=f"PIDs: {pid_summary}",
     )
-    signal_processes(processes, signal.SIGTERM)
-    remaining = wait_for_app_processes_to_exit(app, 5.0)
-
-    if remaining:
-        remaining_pids = ", ".join(str(pid) for pid, _command in remaining)
-        terminal_status(
-            "FORCE",
-            "Some target-app processes ignored the close request; force-closing them.",
-            "33",
-            detail=f"PIDs: {remaining_pids}",
+    escaped = str(app).replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        subprocess.run(
+            [
+                "/usr/bin/osascript",
+                "-e",
+                f'tell application (POSIX file "{escaped}" as alias) to quit',
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
         )
-        signal_processes(remaining, signal.SIGKILL)
-        remaining = wait_for_app_processes_to_exit(app, 3.0)
+    except OSError as exc:
+        raise PatchSkipped(
+            f"Desktop patch skipped: could not request a graceful app close ({exc}). "
+            "Close ChatGPT manually, then sync enabled providers again."
+        ) from exc
 
+    remaining = wait_for_app_processes_to_exit(app, 8.0)
     if remaining:
-        details = "\n".join(f"PID {pid}: {command}" for pid, command in remaining)
-        raise PatchError(
-            "Could not stop every process belonging to the target app bundle.\n\n"
-            f"{details}"
+        details = ", ".join(str(pid) for pid, _command in remaining)
+        raise PatchSkipped(
+            "Desktop patch skipped: ChatGPT is still running "
+            f"(PIDs: {details}). Close it normally, then sync enabled providers again."
         )
-
-    terminal_status(
-        "CLOSED",
-        "All processes belonging to the target app bundle have stopped.",
-        "32",
-    )
+    terminal_status("CLOSED", "The target ChatGPT app closed gracefully.", "32")
+    return True
 
 
 def unique_candidate(
@@ -1896,7 +1906,56 @@ def restore_backup(app: Path, backup: Path) -> Path:
     return failed_copy
 
 
-def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool) -> None:
+@contextmanager
+def restore_app_after_failure(
+    app: Path, backup: Path, progress: PatchProgress | None
+) -> Any:
+    """Restore and verify the full app bundle after every post-backup failure."""
+    try:
+        yield
+    except Exception:
+        report(progress, "atomic replacement", "rolling back from the verified backup")
+        terminal_status(
+            "RECOVERY",
+            "Patching failed after backup. Restoring the original app.",
+            "33",
+            stream=sys.stderr,
+        )
+        try:
+            failed_copy = restore_backup(app, backup)
+            report(progress, "verification", "verifying the restored original application")
+            backup_asar = backup / "Contents" / "Resources" / "app.asar"
+            restored_asar = app / "Contents" / "Resources" / "app.asar"
+            if backup_asar.read_bytes() != restored_asar.read_bytes():
+                raise PatchError("Restored app.asar does not match the verified backup")
+            terminal_status(
+                "RESTORED",
+                "The original app was restored. The failed patched copy was retained.",
+                "32",
+                detail=failed_copy,
+                stream=sys.stderr,
+            )
+        except Exception as restore_exc:
+            terminal_panel(
+                "Recovery failed",
+                f"Automatic restoration failed: {restore_exc}\n"
+                f"The full backup remains at: {backup}",
+                "31",
+                stream=sys.stderr,
+            )
+            raise PatchError(
+                f"Patch failed and automatic restoration failed; backup remains at: {backup}"
+            ) from restore_exc
+        raise
+
+
+def patch_app(
+    app: Path,
+    config: Path,
+    backup_dir: Path,
+    overwrite_config: bool,
+    progress: PatchProgress | None = None,
+) -> None:
     info_path = app / "Contents" / "Info.plist"
     resources = app / "Contents" / "Resources"
     asar_path = resources / "app.asar"
@@ -1964,12 +2023,18 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
         "34",
         detail=app,
     )
-    with tempfile.TemporaryDirectory(prefix="chatgpt-provider-patch-") as temporary:
+    report(progress, "backup", "creating a verified backup of the desktop app")
+    backup = make_backup(app, backup_dir, version, build)
+    terminal_status("OK", "App backup created.", "32", detail=backup)
+    with restore_app_after_failure(
+        app, backup, progress
+    ), tempfile.TemporaryDirectory(prefix="chatgpt-provider-patch-") as temporary:
         work = Path(temporary)
         extracted = work / "app"
         patched_asar = work / "app.asar"
         patched_plist = work / "Info.plist"
 
+        report(progress, "extraction", "extracting application resources")
         run(
             ["npx", "--yes", ASAR_PACKAGE, "extract", str(asar_path), str(extracted)],
             label="Extracting application resources",
@@ -1978,6 +2043,7 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
         if not assets.is_dir():
             raise PatchError("Extracted app has no webview/assets directory")
 
+        report(progress, "bundle matching", "matching the supported application bundle layout")
         central = unique_candidate(
             assets,
             ("async prewarmThreadStart(", "async sendConfigReadRequest("),
@@ -1991,6 +2057,7 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
 
         patch_targets = list(dict.fromkeys((central, picker)))
 
+        report(progress, "source patch", "applying provider-first model routing")
         run(
             [
                 "npx",
@@ -2014,6 +2081,7 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
         if "CodexCustomProviderPickerSection" not in picker.read_text(encoding="utf-8"):
             raise PatchError("Provider picker missing after patch")
 
+        report(progress, "repack", "repacking the patched application archive")
         run(
             [
                 "npx",
@@ -2036,12 +2104,8 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
         with patched_plist.open("wb") as handle:
             plistlib.dump(info, handle, fmt=plist_format, sort_keys=False)
 
-        backup = make_backup(app, backup_dir, version, build)
-        terminal_status("OK", "App backup created.", "32", detail=backup)
-
-        live_mutation_started = False
         try:
-            live_mutation_started = True
+            report(progress, "atomic replacement", "atomically replacing the application archive")
             atomic_replace_file(patched_asar, asar_path)
             atomic_replace_file(patched_plist, info_path)
             run(
@@ -2060,37 +2124,14 @@ def patch_app(app: Path, config: Path, backup_dir: Path, overwrite_config: bool)
                 label="Verifying the app signature",
             )
 
+            report(progress, "verification", "verifying the installed archive and application signature")
             final_info, _ = load_plist(info_path)
             if asar_header_hash(asar_path) != asar_integrity_hash(final_info):
                 raise PatchError("Installed ASAR integrity verification failed")
             if not contains_marker(asar_path):
                 raise PatchError("Installed ASAR is missing the patch marker")
-        except Exception as exc:
-            if live_mutation_started:
-                terminal_status(
-                    "RECOVERY",
-                    "Installation failed after app files changed. Restoring the backup.",
-                    "33",
-                    stream=sys.stderr,
-                )
-                try:
-                    failed_copy = restore_backup(app, backup)
-                    terminal_status(
-                        "RESTORED",
-                        "The original app was restored. The failed patched copy was retained.",
-                        "32",
-                        detail=failed_copy,
-                        stream=sys.stderr,
-                    )
-                except Exception as restore_exc:
-                    terminal_panel(
-                        "Recovery failed",
-                        f"Automatic restoration failed: {restore_exc}\n"
-                        f"The full backup remains at: {backup}",
-                        "31",
-                        stream=sys.stderr,
-                    )
-            raise exc
+        except Exception:
+            raise
 
     print_completion_summary(config, backup=backup, upgraded=is_upgrade)
 
@@ -2099,7 +2140,7 @@ def main() -> int:
     args = parse_args()
     try:
         app = args.app.expanduser().resolve()
-        stop_target_app_processes(app, args.allow_running)
+        gracefully_close_target_app_processes(app)
         patch_app(
             app,
             args.config.expanduser().resolve(),

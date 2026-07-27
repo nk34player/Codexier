@@ -301,7 +301,7 @@ def _merge_profile(
     }
     profiles = result.setdefault("profiles", {})
     profiles["codexier"] = {
-        "name": "Codexier",
+        "name": "codexier",
         "model": provider.models[0].id,
         "model_provider": "codexier",
         "model_context_window": context_window,
@@ -329,7 +329,7 @@ def _normal_profile(
 ) -> dict[str, Any]:
     context_window, compact_limit = _context_limits(settings or {})
     return {
-        "name": "Codexier",
+        "name": "codexier",
         "model": provider.models[0].id,
         "model_provider": "codexier",
         "model_context_window": context_window,

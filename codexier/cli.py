@@ -11,12 +11,10 @@ from .codex_profile import (
     legacy_codexier_provider_id,
     launch_command,
 )
-from .errors import CodexierError
+from .errors import CodexierError, ConfigError
 from .models import CodexSettings
 from .process_manager import (
-    detect_chatgpt_processes,
     detect_codex_processes,
-    restart_chatgpt,
     restart_codex,
 )
 from .provider_store import (
@@ -48,6 +46,29 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--restore-desktop-patch", type=Path, metavar="BACKUP",
                         help="Restore a desktop patch backup and exit.")
     return parser
+
+
+def _desktop_patch_progress(percent: int, detail: str) -> None:
+    print(f"[desktop patch {percent:3d}%] {detail}")
+
+
+def _apply_post_sync_desktop_patch() -> None:
+    """Patch supported desktop apps without turning a successful sync into failure."""
+    backup_root = Path.home() / ".codex" / "codexier-desktop-backups"
+    try:
+        status = apply_desktop_patch(
+            default_target(),
+            backup_root,
+            progress=_desktop_patch_progress,
+        )
+        print(status.message)
+        if status.skipped:
+            print("Provider sync succeeded; the desktop patch was safely skipped.")
+    except (ConfigError, OSError) as exc:
+        print(
+            "Provider sync succeeded, but desktop patching did not complete: "
+            f"{exc}. Your Codex configuration and desktop app data were left intact."
+        )
 
 
 def _confirm(prompt: str) -> bool:
@@ -114,10 +135,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"Model catalog installed: {result.catalog_path}")
                 if args.print_command or sys.platform.startswith("linux"):
                     print("Run: " + " ".join(launch_command()))
-                if args.patch_desktop:
-                    desktop_target = default_target()
-                    backup_root = Path.home() / ".codex" / "codexier-desktop-backups"
-                    print(apply_desktop_patch(desktop_target, backup_root).message)
+                if sys.platform in {"darwin", "win32"} or args.patch_desktop:
+                    _apply_post_sync_desktop_patch()
             else:
                 from .backup import atomic_write, backup_config
 
@@ -127,14 +146,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"Configuration updated: {target.path}")
 
             if sys.platform == "win32":
-                if args.no_restart:
-                    print("ChatGPT restart skipped by request.")
-                else:
-                    # ChatGPT is restarted automatically on Windows only when
-                    # it was already running; a closed app remains closed.
-                    print(restart_chatgpt(detect_chatgpt_processes()).message)
                 if args.restart:
                     print(restart_codex(detect_codex_processes(), force=True).message)
+                else:
+                    print("Restart Codex manually to apply CLI configuration changes.")
             else:
                 should_restart = args.restart
                 if not args.no_restart and not args.restart and not args.yes:
