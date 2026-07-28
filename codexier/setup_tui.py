@@ -1065,6 +1065,21 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
             info.update("Select a verified original backup before restoring.")
             info.add_class("error")
             return
+        processes = []
+        if backup.target.platform == "darwin":
+            try:
+                from .desktop_patch_macos import find_target_app_processes
+
+                app = backup.target.archive_path.parents[2]
+                processes = find_target_app_processes(app)
+            except (ConfigError, OSError, PatchError):
+                pass
+        if processes:
+            self.app.push_screen(
+                ForceCloseConfirmScreen(tuple(pid for pid, _ in processes)),
+                lambda confirmed: self._force_close_restore_confirmed(confirmed),
+            )
+            return
         self.app.push_screen(
             RestoreConfirmScreen(
                 f"Restore {backup.kind.lower()}:\n{backup.path}\n\nto:\n{backup.target.archive_path}"
@@ -1087,9 +1102,25 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
             return
         self.action_select()
 
-    def _restore_confirmed(self, confirmed: bool | None) -> None:
+    def _restore_confirmed(
+        self, confirmed: bool | None, force_close: bool = False
+    ) -> None:
         if confirmed:
-            self.run_worker(self._restore_selected(), exclusive=True)
+            self.run_worker(
+                self._restore_selected(force_close=force_close), exclusive=True
+            )
+
+    def _force_close_restore_confirmed(self, confirmed: bool | None) -> None:
+        if confirmed:
+            backup = self._selected_backup()
+            if backup is None:
+                return
+            self.app.push_screen(
+                RestoreConfirmScreen(
+                    f"Restore {backup.kind.lower()}:\n{backup.path}\n\nto:\n{backup.target.archive_path}"
+                ),
+                lambda restored: self._restore_confirmed(restored, force_close=True),
+            )
 
     def action_delete(self) -> None:
         backup = self._selected_backup()
@@ -1146,7 +1177,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
         if self.progress_screen is not None:
             self.progress_screen.update_progress(percent, detail)
 
-    async def _restore_selected(self) -> None:
+    async def _restore_selected(self, force_close: bool = False) -> None:
         backup = self._selected_backup()
         if backup is None:
             return
@@ -1154,6 +1185,14 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
         await self.app.push_screen(self.progress_screen)
         try:
             from .desktop_patch import restore_desktop_patch
+            if force_close:
+                from .desktop_patch_macos import gracefully_close_target_app_processes
+
+                await asyncio.to_thread(
+                    gracefully_close_target_app_processes,
+                    backup.target.archive_path.parents[2],
+                    force=True,
+                )
 
             await asyncio.to_thread(
                 restore_desktop_patch,
