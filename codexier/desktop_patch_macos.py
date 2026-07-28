@@ -44,8 +44,9 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV21"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV22"
 LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV21",
     b"__codexDesktopModelProvidersPatchV20",
     b"__codexDesktopModelProvidersPatchV19",
     b"__codexDesktopModelProvidersPatchV18",
@@ -922,7 +923,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV21 ??= {
+  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -953,11 +954,12 @@ async function codexPatchAppServerParams(e, t) {
   if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
   let n = await codexLoadProviderRoutingConfigV4(!0), r;
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
-  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-  if (i?.models.some((e) => e.id === t.model))
-    return { ...t, modelProvider: i.id };
+  let i = n.providers.find((e) => e.id === r);
+  if (i != null) return { ...t, modelProvider: i.id };
   let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
-  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
+  if (a.length === 1) return { ...t, modelProvider: a[0].id };
+  let o = n.providers.find((e) => e.id === n.defaultProvider);
+  return o?.models.some((e) => e.id === t.model) ? { ...t, modelProvider: o.id } : t;
 }"""
 
 PICKER_V7_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
@@ -1005,7 +1007,7 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV21 ??= {
+  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1245,7 +1247,7 @@ def _v7_upgrade_diffs(
 @@ provider marker
  function codexProviderRoutingStateV4() {{
 -  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {{
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
    }});
 """
@@ -1300,12 +1302,12 @@ CENTRAL_DIFF_V6_TO_V7, PICKER_DIFF_V6_TO_V7 = _v7_upgrade_diffs(
     "V6", "Provider for new tasks"
  )
 
-# V18 to V21: marker bump only. V18 and V21 are both selection-authoritative;
+# V18 to V22: marker bump only. V18 and V22 are both selection-authoritative;
 # the V19 model->provider localStorage map was a regression and is reverted.
 CENTRAL_DIFF_V18_TO_V20 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV18 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 """
@@ -1313,12 +1315,12 @@ CENTRAL_DIFF_V18_TO_V20 = r"""@@ provider marker
 PICKER_DIFF_V18_TO_V20 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV18 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 """
 
-# V19 to V21: revert the model->provider localStorage map and the provider-sync
+# V19 to V22: revert the model->provider localStorage map and the provider-sync
 # effect. The map mirrored the default provider and took precedence over the
 # live provider selection in request routing, so every duplicate-model request
 # (gpt-5.6-luna is exposed by both a6api and TongApi) routed to the default.
@@ -1328,7 +1330,7 @@ PICKER_DIFF_V18_TO_V20 = r"""@@ picker marker
 CENTRAL_DIFF_V19_TO_V20 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV19 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 @@ provider selection
@@ -1346,7 +1348,7 @@ CENTRAL_DIFF_V19_TO_V20 = r"""@@ provider marker
 PICKER_DIFF_V19_TO_V20 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV19 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 @@ duplicate model label resolution
@@ -1397,18 +1399,31 @@ PICKER_DIFF_V19_TO_V20 = r"""@@ picker marker
      if (o != null && s != null && !l.some((e) => e.model === s) && l[0] != null)
 """
 
-CENTRAL_DIFF_V20_TO_V21 = r"""@@ provider marker
+CENTRAL_DIFF_V20_TO_V22 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV20 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
+   config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
+@@ selected provider authority
+  let n = await codexLoadProviderRoutingConfigV4(!0), r;
+  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
+- let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
+- if (i?.models.some((e) => e.id === t.model))
+-   return { ...t, modelProvider: i.id };
++ let i = n.providers.find((e) => e.id === r);
++ if (i != null) return { ...t, modelProvider: i.id };
+  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
+- return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
++ if (a.length === 1) return { ...t, modelProvider: a[0].id };
++ let o = n.providers.find((e) => e.id === n.defaultProvider);
++ return o?.models.some((e) => e.id === t.model) ? { ...t, modelProvider: o.id } : t;
 """
 
-PICKER_DIFF_V20_TO_V21 = r"""@@ picker marker
+PICKER_DIFF_V20_TO_V22 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV20 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 @@ composer footer label
@@ -1416,12 +1431,41 @@ PICKER_DIFF_V20_TO_V21 = r"""@@ picker marker
 +function $X(e){let t=(0,Ics.c)(14),{model:n,displayName:r,labelClassName:i,serviceTierIconKind:a,stripGptPrefix:o}=e,s=a===void 0?null:a,c=o===void 0?!1:o,l;if(n){l=(0,Lcs.jsx)(CodexProviderModelLabelV4,{value:n,fallback:r??n})}else if(r!=null){let e;if(t[0]!==r||t[1]!==c){let n=GX(r);e=c?n.replace(/^GPT-/iu,``):n,t[0]=r,t[1]=c,t[2]=e}else e=t[2];l=e}else l=n;let u;
 """
 
-# V16 to V21: refresh patch state after switching new threads to the selected
+CENTRAL_DIFF_V21_TO_V22 = r"""@@ provider marker
+ function codexProviderRoutingStateV4() {
+-  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
+    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
+@@ selected provider authority
+  let n = await codexLoadProviderRoutingConfigV4(!0), r;
+  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
+- let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
+- if (i?.models.some((e) => e.id === t.model))
+-   return { ...t, modelProvider: i.id };
++ let i = n.providers.find((e) => e.id === r);
++ if (i != null) return { ...t, modelProvider: i.id };
+  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
+- return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
++ if (a.length === 1) return { ...t, modelProvider: a[0].id };
++ let o = n.providers.find((e) => e.id === n.defaultProvider);
++ return o?.models.some((e) => e.id === t.model) ? { ...t, modelProvider: o.id } : t;
+"""
+
+PICKER_DIFF_V21_TO_V22 = r"""@@ picker marker
+ function codexPickerProviderRoutingStateV4() {
+-  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
+    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
+  });
+"""
+
+# V16 to V22: refresh patch state after switching new threads to the selected
 # provider route while hiding provider filters from thread listing.
 CENTRAL_DIFF_V16_TO_V17 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 """
@@ -1429,7 +1473,7 @@ CENTRAL_DIFF_V16_TO_V17 = r"""@@ provider marker
 PICKER_DIFF_V16_TO_V17 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
++  return (window.__codexDesktopModelProvidersPatchV22 ??= {
      config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
    });
 """
@@ -1477,7 +1521,8 @@ PICKER_DIFF_V15_TO_V16 = r"""@@ picker marker
 
 
 PATCH_VARIANTS: tuple[tuple[str, str, str], ...] = (
-    ("ChatGPT 26.721 V20 footer label fix upgrade", CENTRAL_DIFF_V20_TO_V21, PICKER_DIFF_V20_TO_V21),
+    ("ChatGPT 26.721 V20 footer label fix upgrade", CENTRAL_DIFF_V20_TO_V22, PICKER_DIFF_V20_TO_V22),
+    ("ChatGPT 26.721 V21 selected-provider authority upgrade", CENTRAL_DIFF_V21_TO_V22, PICKER_DIFF_V21_TO_V22),
     ("ChatGPT 26.721 V19 map-revert upgrade", CENTRAL_DIFF_V19_TO_V20, PICKER_DIFF_V19_TO_V20),
     ("ChatGPT 26.721 V18 marker bump upgrade", CENTRAL_DIFF_V18_TO_V20, PICKER_DIFF_V18_TO_V20),
     ("ChatGPT 26.721 V16 umbrella provider upgrade", CENTRAL_DIFF_V16_TO_V17, PICKER_DIFF_V16_TO_V17),

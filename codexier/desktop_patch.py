@@ -24,7 +24,7 @@ from .errors import ConfigError
 from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV21"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV22"
 PATCH_MARKER_PREFIX = b"__codexDesktopModelProvidersPatch"
 
 
