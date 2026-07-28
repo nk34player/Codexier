@@ -18,6 +18,7 @@ from codexier.windows_portable import (
     OfficialPackage,
     PORTABLE_PATCH_VERSION,
     _default_health_check,
+    _remove_tree,
     _portable_paths,
     discover_official_package,
     install_portable,
@@ -92,7 +93,8 @@ def test_portable_launch_disables_app_updates(tmp_path: Path, monkeypatch):
 
     portable._launch_portable(executable)
 
-    assert launched["command"] == [str(executable)]
+    assert launched["command"][0] == str(executable)
+    assert launched["command"][1].endswith(r"PortableCodex\user-data")
     assert launched["env"]["CODEX_SPARKLE_ENABLED"] == "false"
 
 
@@ -121,6 +123,54 @@ def test_health_check_closes_only_the_launched_portable_process(tmp_path: Path, 
     assert [(item.pid, item.executable) for item in closed] == [
         (4321, str(executable))
     ]
+
+
+def test_health_check_terminates_only_its_stuck_process_tree(tmp_path: Path, monkeypatch):
+    executable = tmp_path / "Codex.exe"
+    executable.write_bytes(b"exe")
+
+    class StuckProcess:
+        pid = 4321
+
+        def wait(self, timeout):
+            raise subprocess.TimeoutExpired(str(executable), timeout)
+
+    commands = []
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: StuckProcess())
+    monkeypatch.setattr(
+        "codexier.windows_portable.gracefully_close_chatgpt_processes",
+        lambda _processes: CloseResult(False, "still running"),
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda command, **_kwargs: commands.append(command) or subprocess.CompletedProcess(command, 0),
+    )
+
+    assert _default_health_check(executable)
+    assert commands == [["taskkill.exe", "/PID", "4321", "/T", "/F"]]
+
+
+def test_remove_tree_retries_windows_file_locks(tmp_path: Path, monkeypatch):
+    directory = tmp_path / "PortableCodex"
+    directory.mkdir()
+    original_rmtree = shutil.rmtree
+    calls = 0
+
+    def locked_once(path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise PermissionError("locked")
+        original_rmtree(path)
+
+    monkeypatch.setattr("codexier.windows_portable.shutil.rmtree", locked_once)
+    monkeypatch.setattr("codexier.windows_portable.time.sleep", lambda _seconds: None)
+
+    _remove_tree(directory)
+
+    assert calls == 2
+    assert not directory.exists()
 
 
 def test_health_check_reports_the_exit_code_and_diagnostics(tmp_path: Path, monkeypatch):
@@ -214,6 +264,7 @@ def test_install_clones_full_package_root_patches_copy_and_keeps_source_immutabl
         progress=lambda percent, detail: events.append((percent, detail)),
         health_check=lambda _path: True,
         close_processes=lambda _items: CloseResult(True, "closed"),
+        detect_processes=lambda **_kwargs: (),
     )
 
     assert status.installed and status.patched
@@ -276,7 +327,12 @@ def test_refresh_only_inspects_an_existing_portable_app(tmp_path: Path, monkeypa
     close = lambda _items: CloseResult(True, "closed")
     first = package_fixture(tmp_path / "source-one", version="1.0.0.0")
     installed = install_portable(
-        config, package=first, environ=environ, health_check=lambda _path: True, close_processes=close
+        config,
+        package=first,
+        environ=environ,
+        health_check=lambda _path: True,
+        close_processes=close,
+        detect_processes=lambda **_kwargs: (),
     )
     assert installed.executable and installed.archive
     old_exe = installed.executable.read_bytes()
@@ -328,6 +384,7 @@ def test_portable_status_detects_manual_update_and_already_current_install(
         environ=environ,
         health_check=lambda _path: True,
         close_processes=lambda _items: CloseResult(True, "closed"),
+        detect_processes=lambda **_kwargs: (),
     )
     assert not portable_status(package, environ=environ).update_available
     changed = package_fixture(tmp_path / "new-source", version="2.0.0.0")

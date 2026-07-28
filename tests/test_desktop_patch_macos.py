@@ -7,6 +7,7 @@ from codexier.desktop_patch_macos import (
     CODEX_26721_4979_CENTRAL_ANCHOR,
     CODEX_26721_4979_LAYOUT,
     CODEX_26721_4979_MENU_ANCHOR,
+    CODEX_26721_4979_MODEL_CHANGED_ANCHOR,
     CODEX_26721_4979_MODELS_ANCHOR,
     CODEX_26721_4979_PICKER_ANCHOR,
     CODEX_26721_4979_PREWARM_ANCHOR,
@@ -201,6 +202,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
                 CODEX_26721_4979_PICKER_ANCHOR,
                 CODEX_26721_4979_MODELS_ANCHOR,
                 CODEX_26721_4979_MENU_ANCHOR,
+                CODEX_26721_4979_MODEL_CHANGED_ANCHOR,
                 CODEX_26721_4979_REACT_ANCHOR,
             )
         ),
@@ -212,6 +214,8 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
     assert "__codexDesktopModelProvidersPatchV7" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "}=e;p=codexUseProviderModels(p);let P=m" in patched
+    assert "o=codexPickerModelLabelV4(n,jol(n,a))" in patched
+    assert "l=codexPickerModelLabelV4(r,jol(r,c))" in patched
     assert "t=await codexPatchAppServerParams(e,t)" in patched
     assert "e=await codexPatchAppServerParams(`thread/start`,e)" in patched
 
@@ -235,6 +239,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
             CODEX_26721_4979_PICKER_ANCHOR,
             CODEX_26721_4979_MODELS_ANCHOR,
             CODEX_26721_4979_MENU_ANCHOR,
+            CODEX_26721_4979_MODEL_CHANGED_ANCHOR,
             CODEX_26721_4979_REACT_ANCHOR,
             "async prewarmThreadStart(async sendConfigReadRequest("
             "composer.intelligenceDropdown.tooltipmodelOptionsDisabled",

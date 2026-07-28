@@ -37,8 +37,8 @@ from .process_manager import (
 from .settings import save_settings
 
 
-# Recreate portable payloads made before the startup syntax validation fix.
-PORTABLE_PATCH_VERSION = "8"
+# Recreate portable payloads with the provider-first picker.
+PORTABLE_PATCH_VERSION = "11"
 PORTABLE_PROGRESS = {
     "detection": 5,
     "validation": 12,
@@ -392,7 +392,7 @@ def _restore_previous(
 ) -> None:
     _emit(progress, "rollback", "restoring the previous portable installation")
     if root.exists():
-        shutil.rmtree(root)
+        _remove_tree(root)
     if rollback.exists():
         os.replace(rollback, root)
     if previous_fingerprint and previous_paths:
@@ -411,10 +411,32 @@ def _portable_environment() -> dict[str, str]:
     return environment
 
 
+def _portable_command(executable: Path, *arguments: str) -> list[str]:
+    return [
+        str(executable),
+        f"--user-data-dir={portable_root() / 'user-data'}",
+        *arguments,
+    ]
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove a just-closed portable payload after Windows releases its DLL handles."""
+    for attempt in range(20):
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError as exc:
+            if attempt == 19:
+                raise ConfigError(
+                    f"Portable Codex is still using {path}. Close it normally and try again."
+                ) from exc
+            time.sleep(0.1)
+
+
 def _default_health_check(executable: Path) -> bool:
     try:
         process = subprocess.Popen(
-            [str(executable), "--version"],
+            _portable_command(executable, "--version"),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -424,7 +446,17 @@ def _default_health_check(executable: Path) -> bool:
             exit_code = process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             launched = (ChatGPTProcess(process.pid, str(executable), ""),)
-            return gracefully_close_chatgpt_processes(launched).closed
+            if gracefully_close_chatgpt_processes(launched).closed:
+                return True
+            # The health check launched this process, so terminate its whole
+            # tree rather than leaving a child DLL handle that blocks rollback.
+            result = subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return result.returncode == 0
         if exit_code == 0:
             return True
         output = getattr(process, "stdout", None)
@@ -485,7 +517,7 @@ def install_portable(
     base.mkdir(parents=True, exist_ok=True)
     rollback = base / "PortableCodex.rollback"
     if rollback.exists():
-        shutil.rmtree(rollback)
+        _remove_tree(rollback)
     previous_metadata = _read_metadata(environ)
     previous_paths = (
         _portable_paths(previous_metadata, environ) if previous_metadata and root.exists() else None
@@ -508,7 +540,7 @@ def install_portable(
         )
     source_fingerprint = (_hash(package.executable), _hash(package.archive))
     staging = Path(tempfile.mkdtemp(prefix=".PortableCodex-staging-", dir=base))
-    shutil.rmtree(staging)
+    _remove_tree(staging)
     installed = False
     try:
         _emit(progress, "staging", f"creating staging directory under {base}")
@@ -559,7 +591,7 @@ def install_portable(
             mode=0o600,
         )
         if rollback.exists():
-            shutil.rmtree(rollback)
+            _remove_tree(rollback)
     except Exception:
         try:
             if installed or rollback.exists():
@@ -574,7 +606,7 @@ def install_portable(
         raise
     finally:
         if staging.exists():
-            shutil.rmtree(staging)
+            _remove_tree(staging)
     final = portable_status(package, environ=environ)
     _emit(progress, "completion", final.message)
     return final
@@ -669,7 +701,7 @@ def _launch_official(package: OfficialPackage) -> object:
 
 
 def _launch_portable(executable: Path) -> object:
-    return subprocess.Popen([str(executable)], env=_portable_environment())
+    return subprocess.Popen(_portable_command(executable), env=_portable_environment())
 
 
 def sync_and_launch_windows(

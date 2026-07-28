@@ -209,7 +209,7 @@ def test_settings_toggle_updates_the_existing_item_without_duplicate_ids(tmp_pat
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
             assert screen.settings["supports_parallel_tool_calls"] is True
-            assert len(screen.query_one("#settings").children) == 6
+            assert len(screen.query_one("#settings").children) == len(screen.setting_keys)
 
     asyncio.run(scenario())
 
@@ -241,7 +241,7 @@ def test_settings_show_explanations_for_every_setting(tmp_path: Path):
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
             items = list(screen.query("#settings > ListItem"))
-            assert len(items) == len(screen.SETTING_KEYS)
+            assert len(items) == len(screen.setting_keys)
             for item in items:
                 text = str(item.query_one(Label).render())
                 assert "\\n" in text

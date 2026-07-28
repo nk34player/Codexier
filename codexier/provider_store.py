@@ -8,6 +8,8 @@ from typing import Any
 from .errors import CatalogError
 from .models import ModelDefinition, Provider, validate_provider
 
+MODEL_CATALOG = json.loads((Path(__file__).with_name("catalog.json")).read_text(encoding="utf-8"))
+
 
 @dataclass(frozen=True)
 class LegacyEnableMigration:
@@ -146,7 +148,15 @@ class ProviderStore:
 
     @staticmethod
     def _parse_provider(item: dict[str, Any]) -> Provider:
-        models = tuple(ModelDefinition(str(model["id"]), str(model.get("label", model["id"]))) for model in item["models"])
+        models = tuple(
+            ModelDefinition(
+                model_id := str(model["id"]),
+                MODEL_CATALOG.get(model_id, model_id)
+                if model.get("label") in (None, model_id)
+                else str(model["label"]),
+            )
+            for model in item["models"]
+        )
         presets = {str(name): tuple(str(model_id) for model_id in ids) for name, ids in item.get("presets", {}).items()}
         return Provider(
             id=str(item["id"]),

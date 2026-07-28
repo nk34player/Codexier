@@ -64,11 +64,11 @@ AppX/MSIX. It does not require Codex App Manager, a mirror, or another external
 project. Use **Repair patch** after a patch problem.
 
 Both modes use the same lowercase `codexier` profile, displayed as `Codexier`,
-and the standard `%USERPROFILE%\.codex` home. Existing sessions, chats,
-workspaces, credentials, projects, accounts, and unrelated configuration stay in
-place. Codexier does not copy, migrate, filter, or delete them. If `CODEX_HOME`
-points elsewhere, Windows dual-app launch is blocked until it is unset or points
-to the standard `.codex` directory.
+and the standard `%USERPROFILE%\.codex` home. Portable Codex keeps its Electron
+user data in `PortableCodex\user-data`, so it does not take over the Official
+app's running instance or session. If `CODEX_HOME` points elsewhere, Windows
+dual-app launch is blocked until it is unset or points to the standard `.codex`
+directory.
 
 Before switching or updating, Codexier requests a graceful close of all Official
 and Portable Codex windows. It never force-kills them. A failed close aborts

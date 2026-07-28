@@ -33,6 +33,24 @@ def test_load_catalog(tmp_path: Path):
     assert providers[0].enabled is False
 
 
+def test_load_catalog_uses_packaged_label_without_overriding_custom_label(tmp_path: Path):
+    path = tmp_path / "providers.json"
+    path.write_text(json.dumps({"providers": [{
+        "id": "demo", "name": "Demo", "base_url": "https://example.com/v1", "api_key": "secret",
+        "models": [
+            {"id": "gpt-5.6-terra"},
+            {"id": "gpt-5.6-sol", "label": "Fast model"},
+        ], "presets": {},
+    }]}))
+
+    models = ProviderStore(path).load()[0].models
+
+    assert [(model.id, model.label) for model in models] == [
+        ("gpt-5.6-terra", "5.6 Terra"),
+        ("gpt-5.6-sol", "Fast model"),
+    ]
+
+
 def test_legacy_toggle_migration_preserves_only_previous_default(tmp_path: Path):
     path = tmp_path / "providers.json"
     path.write_text(json.dumps({"version": 1, "providers": [

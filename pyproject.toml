@@ -26,3 +26,6 @@ addopts = "-q"
 
 [tool.setuptools.packages.find]
 include = ["codexier*"]
+
+[tool.setuptools.package-data]
+codexier = ["catalog.json"]

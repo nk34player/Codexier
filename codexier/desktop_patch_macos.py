@@ -1007,6 +1007,16 @@ function codexReadProviderChoiceV4(e) {
 function codexWriteProviderChoiceV4(e) {
   try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
 }
+function codexPickerModelLabelV4(e, t) {
+  let n = codexPickerProviderRoutingStateV4().config,
+    r = codexReadProviderChoiceV4(n),
+    i = n.providers.find((e) => e.id === r);
+  for (let a of [i, ...n.providers]) {
+    let r = a?.models.find((t) => t.id === e);
+    if (r != null) return `${r.label} (${a.label})`;
+  }
+  return t;
+}
 function codexUseProviderModels(e) {
   let r = codexPickerProviderRoutingStateV4(),
     [t, n] = CodexProviderPatchReact.useState(r.config),
@@ -1018,11 +1028,10 @@ function codexUseProviderModels(e) {
     }), () => { e = !1; });
   }, []);
   let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
-  if (o == null) return e;
-  return o.models.flatMap((t) => {
-    let n = e?.find((e) => e.model === t.id);
-    return n == null ? [] : [{ ...n, displayName: `${t.label} (${o.label})` }];
-  });
+  if (o == null || !Array.isArray(e) || e.length === 0) return e;
+  return o.models.map((t) => ({
+    ...e[0], model: t.id, displayName: `${t.label} (${o.label})`,
+  }));
 }
 function CodexCustomProviderPickerSection() {
   let r = codexPickerProviderRoutingStateV4(),
@@ -1073,6 +1082,11 @@ CODEX_26721_4979_MODELS_ANCHOR = (
 CODEX_26721_4979_MENU_ANCHOR = (
     "children:[m,(0,TQ.jsx)(`div`,{className:"
     "`vertical-scroll-fade-mask flex max-h-[250px] flex-col overflow-y-auto`,"
+)
+CODEX_26721_4979_MODEL_CHANGED_ANCHOR = (
+    "t[0]!==n||t[1]!==a?(o=jol(n,a),t[0]=n,t[1]=a,t[2]=o):o=t[2];"
+    "let s=o,c=i?.models,l;t[3]!==c||t[4]!==r?(l=jol(r,c),t[3]=c,t[4]=r,"
+    "t[5]=l):l=t[5];"
 )
 CODEX_26721_4979_REACT_ANCHOR = (
     "var pMs,TQ,mMs=e((()=>{pMs=c(),pd(),ad(),uls(),yss(),bss(),VAs(),Xm(),"
@@ -1964,6 +1978,16 @@ def _apply_codex_26721_4979_layout(source: str) -> str:
         CODEX_26721_4979_MENU_ANCHOR,
         CODEX_26721_4979_MENU_ANCHOR.replace(
             "children:[m,", "children:[m,(0,TQ.jsx)(CodexCustomProviderPickerSection,{}),"
+        ),
+        layout,
+    )
+    source = _replace_once(
+        source,
+        CODEX_26721_4979_MODEL_CHANGED_ANCHOR,
+        CODEX_26721_4979_MODEL_CHANGED_ANCHOR.replace(
+            "o=jol(n,a)", "o=codexPickerModelLabelV4(n,jol(n,a))"
+        ).replace(
+            "l=jol(r,c)", "l=codexPickerModelLabelV4(r,jol(r,c))"
         ),
         layout,
     )

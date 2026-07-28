@@ -102,19 +102,21 @@ def detect_chatgpt_processes(
     platform: str | None = None,
     run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[ChatGPTProcess, ...]:
-    """Find the current user's Windows ChatGPT or Codex desktop processes.
+    """Find ChatGPT or Codex desktop processes in this Windows session.
 
-    Detection is deliberately limited to those executables and the current
-    user. This prevents a provider change from terminating unrelated processes
-    or another user's desktop session.
+    ``Get-Process -IncludeUserName`` requires elevation on standard Windows
+    desktops.  Use the current interactive session instead, so normal users
+    can still close their own app windows without touching another session.
     """
     if (platform or sys.platform) != "win32":
         return ()
 
     script = (
         "$ErrorActionPreference='SilentlyContinue'; "
-        "$items = @(Get-Process -Name 'ChatGPT','Codex' -IncludeUserName | "
-        "Select-Object Id,Path,UserName); "
+        "$session = (Get-Process -Id $PID).SessionId; "
+        "$items = @(Get-Process -Name 'ChatGPT','Codex' | "
+        "Where-Object { $_.SessionId -eq $session -and $null -ne $_.Path } | "
+        "Select-Object Id,Path,ProcessName); "
         "$items | ConvertTo-Json -Compress"
     )
     try:
@@ -133,7 +135,7 @@ def detect_chatgpt_processes(
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
         return ()
 
-    current_user = getpass.getuser().casefold()
+    current_user = getpass.getuser()
     processes: list[ChatGPTProcess] = []
     for item in items:
         if not isinstance(item, dict):
@@ -142,16 +144,11 @@ def detect_chatgpt_processes(
             pid = int(item["Id"])
         except (KeyError, TypeError, ValueError):
             continue
-        username = str(item.get("UserName") or "")
-        owner = username.rsplit("\\", 1)[-1].casefold()
         executable = str(item.get("Path") or "")
         executable_name = os.path.basename(executable.replace("\\", os.sep)).casefold()
-        if (
-            owner != current_user
-            or executable_name not in {"chatgpt.exe", "codex.exe"}
-        ):
+        if executable_name not in {"chatgpt.exe", "codex.exe"}:
             continue
-        processes.append(ChatGPTProcess(pid, executable, username))
+        processes.append(ChatGPTProcess(pid, executable, current_user))
     return tuple(processes)
 
 
