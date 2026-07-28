@@ -218,7 +218,8 @@ def test_windows_back_returns_to_settings_without_exiting_the_manager(tmp_path: 
             await pilot.pause()
             app.push_screen(desktop)
             await pilot.pause()
-            await pilot.click("#back")
+            desktop.query_one("#back", Button).focus()
+            await pilot.press("enter")
             await pilot.pause()
             assert app.screen is settings
 
@@ -324,7 +325,9 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
             app.screen.dismiss(False)
             await pilot.pause()
             assert app.screen is backups
-            backups.action_cancel()
+            back = backups.query_one("#back", Button)
+            backups.set_focus(back)
+            await pilot.press("enter")
             await pilot.pause()
             assert app.screen is desktop
 

@@ -878,7 +878,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
     .error { color: #ff6b8a; }
     """
     BINDINGS = [
-        Binding("enter", "select", "Restore", priority=True),
+        Binding("enter", "activate", "Select", priority=True),
         Binding("b", "manual_backup", "Manual backup", priority=True),
         Binding("delete", "delete", "Delete", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
@@ -983,6 +983,21 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
             ),
             self._restore_confirmed,
         )
+
+    def action_activate(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Button):
+            actions = {
+                "restore": self.action_select,
+                "manual": self.action_manual_backup,
+                "delete": self.action_delete,
+                "back": self.action_cancel,
+            }
+            action = actions.get(focused.id)
+            if action is not None:
+                action()
+            return
+        self.action_select()
 
     def _restore_confirmed(self, confirmed: bool | None) -> None:
         if confirmed:
@@ -1090,6 +1105,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "restore":
             self.action_select()
         elif event.button.id == "manual":
