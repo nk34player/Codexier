@@ -33,6 +33,11 @@ except ImportError:  # Support running this installer directly as a script.
     from patch_progress import PatchProgress, report
 
 try:
+    from .backup import immutable_file_backup
+except ImportError:  # Support running this installer directly as a script.
+    from backup import immutable_file_backup
+
+try:
     import pwd
 except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
@@ -2148,6 +2153,59 @@ def restore_original_app(app: Path, backup: Path, progress: PatchProgress | None
     return failed_copy
 
 
+def restore_archive_backup(
+    app: Path, backup: Path, progress: PatchProgress | None = None
+) -> None:
+    """Restore an immutable app.asar.bak and re-sign its matching app bundle."""
+    asar_path = app / "Contents" / "Resources" / "app.asar"
+    info_path = app / "Contents" / "Info.plist"
+    if not backup.is_file() or contains_marker(backup) or contains_legacy_marker(backup):
+        raise PatchError(f"Backup is not an original app.asar archive: {backup}")
+    original_asar = asar_path.read_bytes()
+    original_info = info_path.read_bytes()
+    report(progress, "process stop", "closing the desktop app before restore")
+    gracefully_close_target_app_processes(app)
+    try:
+        report(progress, "atomic replacement", "restoring app.asar from immutable backup")
+        atomic_replace_file(backup, asar_path)
+        info, plist_format = load_plist(info_path)
+        info["ElectronAsarIntegrity"]["Resources/app.asar"]["hash"] = asar_header_hash(backup)
+        with tempfile.NamedTemporaryFile(delete=False) as temporary:
+            plistlib.dump(info, temporary, fmt=plist_format, sort_keys=False)
+            plist_path = Path(temporary.name)
+        try:
+            atomic_replace_file(plist_path, info_path)
+        finally:
+            plist_path.unlink(missing_ok=True)
+        run(
+            ["/usr/bin/codesign", "--deep", "--force", "--sign", "-", str(app)],
+            label="Applying the ad-hoc app signature",
+        )
+        report(progress, "verification", "verifying restored archive and application signature")
+        final_info, _ = load_plist(info_path)
+        if (
+            asar_path.read_bytes() != backup.read_bytes()
+            or asar_header_hash(asar_path) != asar_integrity_hash(final_info)
+            or contains_marker(asar_path)
+            or contains_legacy_marker(asar_path)
+        ):
+            raise PatchError("Restored app does not match its immutable original backup")
+    except Exception:
+        with tempfile.NamedTemporaryFile(delete=False) as temporary:
+            temporary.write(original_asar)
+            asar_restore = Path(temporary.name)
+        with tempfile.NamedTemporaryFile(delete=False) as temporary:
+            temporary.write(original_info)
+            info_restore = Path(temporary.name)
+        try:
+            atomic_replace_file(asar_restore, asar_path)
+            atomic_replace_file(info_restore, info_path)
+        finally:
+            asar_restore.unlink(missing_ok=True)
+            info_restore.unlink(missing_ok=True)
+        raise
+
+
 @contextmanager
 def restore_app_after_failure(
     app: Path, backup: Path, progress: PatchProgress | None
@@ -2243,6 +2301,21 @@ def patch_app(
             "35",
             detail=f"ChatGPT {version}, build {build}",
         )
+    sidecar = asar_path.with_name(f"{asar_path.name}.bak")
+    if is_upgrade and not sidecar.exists():
+        raise PatchError(
+            "Cannot upgrade a previously patched app without an immutable original "
+            f"backup at: {sidecar}"
+        )
+    sidecar, created = immutable_file_backup(asar_path)
+    if contains_marker(sidecar) or contains_legacy_marker(sidecar):
+        raise PatchError(f"Immutable backup is patched and cannot be used: {sidecar}")
+    asar_header_hash(sidecar)
+    report(
+        progress,
+        "backup",
+        f"{'created' if created else 'reused'} immutable original backup: {sidecar}",
+    )
 
     current_header_hash = asar_header_hash(asar_path)
     expected_header_hash = asar_integrity_hash(info)

@@ -6,6 +6,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def immutable_file_backup(path: Path, suffix: str = ".bak") -> tuple[Path, bool]:
+    """Create one verified sibling backup without ever replacing it."""
+    backup = path.with_name(f"{path.name}{suffix}")
+    try:
+        with path.open("rb") as source, backup.open("xb") as destination:
+            shutil.copyfileobj(source, destination)
+            destination.flush()
+            os.fsync(destination.fileno())
+        shutil.copystat(path, backup)
+    except FileExistsError:
+        return backup, False
+    if path.read_bytes() != backup.read_bytes():
+        backup.unlink(missing_ok=True)
+        raise OSError(f"Could not verify immutable backup: {backup}")
+    return backup, True
+
+
 def backup_config(path: Path) -> Path | None:
     if not path.exists():
         return None

@@ -9,3 +9,9 @@ codexier.local.toml
 
 # Local capability settings
 codexier.settings.json
+
+# Agent instructions
+AGENTS.md
+
+# Graphify generated output
+graphify-out/

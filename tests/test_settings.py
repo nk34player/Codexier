@@ -1,16 +1,21 @@
 import json
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from textual.app import App
 from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TabbedContent, Tabs
 
+from codexier.desktop_patch import DesktopBackup, DesktopPatchTarget
+from codexier.errors import ConfigError
 from codexier.models import ModelDefinition, Provider
 from codexier.settings import DEFAULT_SETTINGS, MAX_CONTEXT_WINDOW, load_settings, save_settings
 from codexier.setup_tui import (
+    BackupManagerScreen,
     ContextProfilesScreen,
     ProviderManagerApp,
+    RestoreConfirmScreen,
     SettingsScreen,
     WindowsDesktopScreen,
     WindowsProgressScreen,
@@ -56,7 +61,7 @@ def test_windows_mode_selections_round_trip_independently(tmp_path: Path):
 
 
 def test_windows_settings_screen_exposes_official_and_portable_actions(tmp_path: Path):
-    screen = WindowsDesktopScreen(tmp_path / "providers.json")
+    screen = WindowsDesktopScreen(tmp_path / "providers.json", platform="win32")
     copy = "\n".join(
         value for value in screen.compose.__code__.co_consts if isinstance(value, str)
     )
@@ -91,6 +96,7 @@ def test_portable_shortcut_toggle_persists_preference(tmp_path: Path, monkeypatc
                 ),
             ),
             initial_tab="portable",
+            platform="win32",
         )
         async with app.run_test() as pilot:
             app.push_screen(screen)
@@ -118,7 +124,10 @@ def test_windows_tabs_and_portable_controls_use_arrow_keys(tmp_path: Path):
         app = App()
         async with app.run_test() as pilot:
             screen = WindowsDesktopScreen(
-                tmp_path / "providers.json", (provider,), initial_tab="portable"
+                tmp_path / "providers.json",
+                (provider,),
+                initial_tab="portable",
+                platform="win32",
             )
             app.push_screen(screen)
             await pilot.pause()
@@ -159,7 +168,10 @@ def test_windows_portable_actions_reach_back_with_down_at_small_size(tmp_path: P
         app = App()
         async with app.run_test(size=(80, 24)) as pilot:
             screen = WindowsDesktopScreen(
-                tmp_path / "providers.json", (provider,), initial_tab="portable"
+                tmp_path / "providers.json",
+                (provider,),
+                initial_tab="portable",
+                platform="win32",
             )
             app.push_screen(screen)
             await pilot.pause()
@@ -177,7 +189,9 @@ def test_windows_back_returns_to_settings_without_exiting_the_manager(tmp_path: 
         provider = Provider("example", "Example", "https://example.test/v1", "key", (), {}, True)
         app = ProviderManagerApp(tmp_path / "providers.json", (provider,))
         settings = SettingsScreen(tmp_path / "providers.json", (provider,))
-        desktop = WindowsDesktopScreen(tmp_path / "providers.json", (provider,))
+        desktop = WindowsDesktopScreen(
+            tmp_path / "providers.json", (provider,), platform="win32"
+        )
 
         async def skip_status_load() -> None:
             pass
@@ -191,6 +205,145 @@ def test_windows_back_returns_to_settings_without_exiting_the_manager(tmp_path: 
             await pilot.click("#back")
             await pilot.pause()
             assert app.screen is settings
+
+    asyncio.run(scenario())
+
+
+def test_application_type_shows_macos_controls_and_backup_manager_returns_to_parent(
+    tmp_path: Path, monkeypatch
+):
+    archive = tmp_path / "ChatGPT.app" / "Contents" / "Resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"patched")
+    sidecar = archive.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    target = DesktopPatchTarget("darwin", archive)
+    backup = DesktopBackup(
+        target,
+        sidecar,
+        sidecar,
+        "Immutable original",
+        len(b"original"),
+        datetime.now(timezone.utc),
+        True,
+        "Original archive",
+    )
+    monkeypatch.setattr("codexier.desktop_patch.application_targets", lambda: (target,))
+    monkeypatch.setattr(
+        "codexier.desktop_patch.desktop_backups",
+        lambda _target, _root: (backup,),
+    )
+
+    async def scenario() -> None:
+        app = App()
+        desktop = WindowsDesktopScreen(tmp_path / "providers.json", platform="darwin")
+        backups = BackupManagerScreen()
+        async with app.run_test() as pilot:
+            app.push_screen(desktop)
+            await pilot.pause()
+            assert isinstance(desktop.query_one("#macos-apply", Button), Button)
+            app.push_screen(backups)
+            await pilot.pause()
+            assert "Platform   darwin" in str(backups.query_one("#backup-info", Static).render())
+            assert "Immutable original" in str(backups.query_one("#backup-info", Static).render())
+            backups.action_select()
+            await pilot.pause()
+            assert isinstance(app.screen, RestoreConfirmScreen)
+            app.screen.dismiss(False)
+            await pilot.pause()
+            assert app.screen is backups
+            backups.action_cancel()
+            await pilot.pause()
+            assert app.screen is desktop
+
+    asyncio.run(scenario())
+
+
+def test_backup_restore_reports_success_and_keeps_selected_backup(tmp_path: Path, monkeypatch):
+    archive = tmp_path / "resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"patched")
+    sidecar = archive.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    target = DesktopPatchTarget("windows", archive)
+    backup = DesktopBackup(
+        target,
+        sidecar,
+        sidecar,
+        "Immutable original",
+        len(b"original"),
+        datetime.now(timezone.utc),
+        True,
+        "Original archive",
+    )
+    restored = []
+    monkeypatch.setattr("codexier.desktop_patch.application_targets", lambda: (target,))
+    monkeypatch.setattr(
+        "codexier.desktop_patch.desktop_backups",
+        lambda _target, _root: (backup,),
+    )
+
+    def restore(selected_target, selected_backup, progress):
+        restored.append((selected_target, selected_backup))
+        progress(80, "verification: restored selected backup")
+
+    monkeypatch.setattr("codexier.desktop_patch.restore_desktop_patch", restore)
+
+    async def scenario() -> None:
+        app = App()
+        manager = BackupManagerScreen()
+        async with app.run_test() as pilot:
+            app.push_screen(manager)
+            await pilot.pause()
+            await manager._restore_selected()
+            assert restored == [(target, sidecar)]
+            assert isinstance(app.screen, WindowsProgressScreen)
+            assert manager.progress_screen is app.screen
+            assert manager.progress_screen.finished
+            assert sidecar.read_bytes() == b"original"
+
+    asyncio.run(scenario())
+
+
+def test_backup_restore_failure_is_shown_in_progress_log(tmp_path: Path, monkeypatch):
+    archive = tmp_path / "resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    sidecar = archive.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    target = DesktopPatchTarget("windows", archive)
+    backup = DesktopBackup(
+        target,
+        sidecar,
+        sidecar,
+        "Immutable original",
+        len(b"original"),
+        datetime.now(timezone.utc),
+        True,
+        "Original archive",
+    )
+    monkeypatch.setattr("codexier.desktop_patch.application_targets", lambda: (target,))
+    monkeypatch.setattr(
+        "codexier.desktop_patch.desktop_backups",
+        lambda _target, _root: (backup,),
+    )
+    monkeypatch.setattr(
+        "codexier.desktop_patch.restore_desktop_patch",
+        lambda *_args: (_ for _ in ()).throw(ConfigError("restore failed")),
+    )
+
+    async def scenario() -> None:
+        app = App()
+        manager = BackupManagerScreen()
+        async with app.run_test() as pilot:
+            app.push_screen(manager)
+            await pilot.pause()
+            await manager._restore_selected()
+            assert isinstance(app.screen, WindowsProgressScreen)
+            assert "restore failed" in str(
+                manager.progress_screen.query_one("#progress-status", Static).render()
+            )
+            assert manager.progress_screen.query_one("#progress-log", RichLog).lines
+            assert manager.progress_screen.finished
 
     asyncio.run(scenario())
 
@@ -209,7 +362,10 @@ def test_official_tab_shows_app_and_selected_configuration_without_provider_list
         app = App()
         async with app.run_test() as pilot:
             screen = WindowsDesktopScreen(
-                tmp_path / "providers.json", (provider,), initial_tab="official"
+                tmp_path / "providers.json",
+                (provider,),
+                initial_tab="official",
+                platform="win32",
             )
             app.push_screen(screen)
             await pilot.pause()
@@ -260,7 +416,10 @@ def test_refresh_portable_status_does_not_require_a_provider(tmp_path: Path, mon
         )
         app = App()
         screen = WindowsDesktopScreen(
-            tmp_path / "providers.json", (provider,), initial_tab="portable"
+            tmp_path / "providers.json",
+            (provider,),
+            initial_tab="portable",
+            platform="win32",
         )
 
         async def skip_status_load() -> None:
@@ -294,6 +453,9 @@ def test_settings_enter_toggles_the_existing_item_without_duplicate_ids(tmp_path
             await pilot.pause()
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
+            settings_view = screen.query_one("#settings", ListView)
+            assert ("application_type", "Application type") in screen.setting_keys
+            assert settings_view.highlighted_child is settings_view.children[0]
             await pilot.press("space")
             assert screen.settings["supports_parallel_tool_calls"] is False
             await pilot.press("enter")

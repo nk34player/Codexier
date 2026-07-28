@@ -22,6 +22,7 @@ from .patch_progress import PatchProgress, report
 
 
 PATCH_MARKER = b"__codexDesktopModelProvidersPatchV7"
+PATCH_MARKER_PREFIX = b"__codexDesktopModelProvidersPatch"
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,18 @@ class DesktopPatchStatus:
     supported: bool
     message: str
     skipped: bool = False
+
+
+@dataclass(frozen=True)
+class DesktopBackup:
+    target: DesktopPatchTarget
+    path: Path
+    archive_path: Path
+    kind: str
+    size_bytes: int
+    modified_at: datetime
+    valid: bool
+    message: str
 
 
 def default_target(platform: str | None = None) -> DesktopPatchTarget:
@@ -246,6 +259,75 @@ def backup_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Path:
     return backup
 
 
+def application_targets(platform: str | None = None) -> tuple[DesktopPatchTarget, ...]:
+    """Return current app archives that can expose immutable backups."""
+    system = (platform or platform_module.system()).lower()
+    if system == "darwin":
+        return (default_target("darwin"),)
+    if system != "windows":
+        return ()
+    targets = [default_target("windows")]
+    try:
+        from .windows_portable import portable_status
+
+        portable = portable_status()
+        if portable.archive is not None:
+            targets.append(
+                DesktopPatchTarget("windows", portable.archive, package_type="unpackaged")
+            )
+    except (ConfigError, OSError):
+        pass
+    unique: dict[str, DesktopPatchTarget] = {}
+    for target in targets:
+        unique[str(target.archive_path.resolve()).casefold()] = target
+    return tuple(unique.values())
+
+
+def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[DesktopBackup, ...]:
+    """List immutable sidecars and legacy managed snapshots for one target."""
+    candidates: list[tuple[Path, Path, str]] = []
+    sidecar = target.archive_path.with_name(f"{target.archive_path.name}.bak")
+    if sidecar.is_file():
+        candidates.append((sidecar, sidecar, "Immutable original"))
+    if backup_root.is_dir():
+        for backup in backup_root.iterdir():
+            if not backup.is_dir():
+                continue
+            archive = (
+                backup / "Contents" / "Resources" / "app.asar"
+                if target.platform == "darwin"
+                else backup / "app.asar"
+            )
+            if archive.is_file():
+                candidates.append((backup, archive, "Managed snapshot"))
+    entries: list[DesktopBackup] = []
+    for path, archive, kind in candidates:
+        try:
+            patched = PATCH_MARKER_PREFIX in archive.read_bytes()
+            stat = archive.stat()
+        except OSError as exc:
+            entries.append(
+                DesktopBackup(
+                    target, path, archive, kind, 0, datetime.fromtimestamp(0, timezone.utc),
+                    False, f"Cannot read backup: {exc}",
+                )
+            )
+            continue
+        entries.append(
+            DesktopBackup(
+                target,
+                path,
+                archive,
+                kind,
+                stat.st_size,
+                datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+                not patched,
+                "Original archive" if not patched else "Patched archive; restore is blocked",
+            )
+        )
+    return tuple(sorted(entries, key=lambda item: item.modified_at, reverse=True))
+
+
 def apply_desktop_patch(
     target: DesktopPatchTarget,
     backup_root: Path,
@@ -338,25 +420,45 @@ def apply_desktop_patch(
     raise ConfigError(status.message)
 
 
-def restore_desktop_patch(target: DesktopPatchTarget, backup: Path) -> None:
+def restore_desktop_patch(
+    target: DesktopPatchTarget,
+    backup: Path,
+    progress: PatchProgress | None = None,
+) -> None:
     if target.diagnostic:
         raise ConfigError(target.diagnostic)
     if target.platform == "darwin":
-        from .desktop_patch_macos import PatchError, restore_original_app
+        from .desktop_patch_macos import PatchError, restore_archive_backup, restore_original_app
 
         try:
-            restore_original_app(target.archive_path.parents[2], backup)
+            if backup.is_file():
+                restore_archive_backup(target.archive_path.parents[2], backup, progress)
+            else:
+                restore_original_app(target.archive_path.parents[2], backup, progress)
         except PatchError as exc:
             raise ConfigError(str(exc)) from exc
         return
-    source = backup / "app.asar"
+    source = backup if backup.is_file() else backup / "app.asar"
     if not source.is_file():
         raise ConfigError(f"Backup does not contain app.asar: {backup}")
+    if PATCH_MARKER_PREFIX in source.read_bytes():
+        raise ConfigError(f"Backup is patched and cannot be restored: {backup}")
+    report(progress, "process stop", "closing the desktop app before restore")
+    try:
+        from .desktop_patch_windows import _gracefully_close_target_processes, _target_processes
+
+        _gracefully_close_target_processes(_target_processes(target.archive_path))
+    except Exception as exc:
+        raise ConfigError(f"Could not close the desktop app before restore: {exc}") from exc
+    report(progress, "atomic replacement", "restoring app.asar from backup")
     _atomic_replace(target.archive_path, source.read_bytes())
     if target.metadata_path:
         metadata = backup / target.metadata_path.name
         if metadata.is_file():
             _atomic_replace(target.metadata_path, metadata.read_bytes())
+    report(progress, "verification", "verifying restored app.asar")
+    if target.archive_path.read_bytes() != source.read_bytes():
+        raise ConfigError(f"Restored app.asar does not match backup: {backup}")
 
 
 def _copy(source: Path, destination: Path) -> None:

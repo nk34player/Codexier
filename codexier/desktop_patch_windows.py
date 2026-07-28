@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .backup import immutable_file_backup
 from .desktop_patch_macos import (
     ASAR_PACKAGE,
     PATCH_MARKER,
@@ -160,6 +161,15 @@ def patch_windows_app(
         executable = _gracefully_close_target_processes(processes)
     else:
         report(progress, "process stop", "portable app is not running")
+    sidecar, created = immutable_file_backup(archive)
+    if contains_marker(sidecar):
+        raise PatchError(f"Immutable backup is patched and cannot be used: {sidecar}")
+    asar_header_hash(sidecar)
+    report(
+        progress,
+        "backup",
+        f"{'created' if created else 'reused'} immutable original backup: {sidecar}",
+    )
     report(progress, "backup", "creating a verified backup of app.asar")
     backup = _make_backup(archive, backup_root)
     try:

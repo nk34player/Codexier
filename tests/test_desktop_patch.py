@@ -5,9 +5,11 @@ import pytest
 
 from codexier.desktop_patch import (
     PATCH_MARKER,
+    DesktopBackup,
     DesktopPatchTarget,
     apply_desktop_patch,
     backup_desktop_patch,
+    desktop_backups,
     default_target,
     patch_status,
     restore_desktop_patch,
@@ -59,6 +61,52 @@ def test_restore_uses_exact_backup(tmp_path: Path):
     restore_desktop_patch(app, backup)
     assert app.archive_path.read_bytes() == b"original"
     assert not patch_status(app).patched
+
+
+def test_immutable_sidecar_backup_is_created_once_and_never_overwritten(tmp_path: Path):
+    app = target(tmp_path, valid_asar(b"original"))
+    sidecar = app.archive_path.with_name("app.asar.bak")
+
+    from codexier.backup import immutable_file_backup
+
+    backup, created = immutable_file_backup(app.archive_path)
+    assert created
+    assert backup == sidecar
+    assert sidecar.read_bytes() == valid_asar(b"original")
+
+    app.archive_path.write_bytes(valid_asar(b"updated"))
+    backup, created = immutable_file_backup(app.archive_path)
+    assert not created
+    assert backup == sidecar
+    assert sidecar.read_bytes() == valid_asar(b"original")
+
+
+def test_backup_inventory_and_restore_preserve_immutable_sidecar(
+    tmp_path: Path, monkeypatch
+):
+    app = target(tmp_path, b"patched" + PATCH_MARKER)
+    sidecar = app.archive_path.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    snapshot = tmp_path / "backups" / "windows-20260728-010101"
+    snapshot.mkdir(parents=True)
+    (snapshot / "app.asar").write_bytes(b"snapshot")
+
+    backups = desktop_backups(app, tmp_path / "backups")
+    assert {(backup.kind, backup.valid) for backup in backups} == {
+        ("Managed snapshot", True),
+        ("Immutable original", True),
+    }
+    immutable = next(backup for backup in backups if backup.path == sidecar)
+    assert isinstance(immutable, DesktopBackup)
+    assert immutable.size_bytes == len(b"original")
+    assert immutable.message == "Original archive"
+
+    import codexier.desktop_patch_windows as windows
+
+    monkeypatch.setattr(windows, "_target_processes", lambda _archive: ())
+    restore_desktop_patch(app, sidecar)
+    assert app.archive_path.read_bytes() == b"original"
+    assert sidecar.read_bytes() == b"original"
 
 
 @pytest.mark.parametrize("layout", (("resources",), ("app", "resources")))

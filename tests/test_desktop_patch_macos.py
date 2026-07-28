@@ -303,6 +303,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     patched = archive.read_text(encoding="utf-8")
     assert "__codexDesktopModelProvidersPatchV7" in patched
     assert "CodexCustomProviderPickerSection" in patched
+    assert archive.with_name("app.asar.bak").read_bytes() == b"original"
 
 
 def test_failed_patch_command_names_the_stage_when_it_has_no_output(monkeypatch):
@@ -357,5 +358,6 @@ def test_windows_rollback_restores_verified_archive_after_post_backup_failure(
     backups = list((tmp_path / "backups").glob("*/app.asar"))
     assert len(backups) == 1
     assert archive.read_bytes() == backups[0].read_bytes() == b"original"
+    assert archive.with_name("app.asar.bak").read_bytes() == b"original"
     assert (MILESTONES["atomic replacement"], "atomic replacement: rolling back from the verified backup") in events
     assert (MILESTONES["verification"], "verification: verifying the restored original archive") in events

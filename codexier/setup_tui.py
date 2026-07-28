@@ -4,6 +4,7 @@ import asyncio
 import json
 import sys
 import time
+from pathlib import Path
 
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -273,7 +274,7 @@ class ProviderManagerApp(App[Provider | None]):
                 "CODEXIER  /  PROVIDER CATALOG\n"
                 "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier fallback."
                 + (
-                    f"\nWindows mode: {self.app_settings['windows']['mode'].title()} Codex App"
+                    f"\nApplication type: {self.app_settings['windows']['mode'].title()} app"
                     if sys.platform == "win32"
                     else ""
                 ),
@@ -461,7 +462,7 @@ class ProviderManagerApp(App[Provider | None]):
         self.app_settings = load_settings(self.catalog_path)
         if changed:
             self.query_one("#status", Static).update(
-                "Windows desktop settings updated. Choose an enabled provider and sync."
+                "Application type settings updated. Choose an enabled provider and sync."
             )
 
     def settings_for(self, provider: Provider) -> CodexSettings:
@@ -546,7 +547,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         "web_search_tool_type": "Selects the configured web-search mode sent to Codex.",
         "input_modalities": "Controls whether models accept text only or text plus images.",
         "context_profiles": "Configures maximum context tokens and when automatic compacting begins.",
-        "windows_desktop": "Chooses the signed Official app or Codexier's writable Portable app.",
+        "application_type": "Chooses official app patching or Codexier's writable Portable app where supported.",
     }
 
     def __init__(self, catalog_path, providers: tuple[Provider, ...] = ()):
@@ -555,11 +556,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         self.providers = providers
         self.settings = load_settings(catalog_path)
         self.index = 0
-        self.setting_keys = self.SETTING_KEYS + (
-            (("windows_desktop", "Windows desktop apps"),)
-            if sys.platform == "win32"
-            else ()
-        )
+        self.setting_keys = self.SETTING_KEYS + (("application_type", "Application type"),)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
@@ -577,7 +574,9 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
 
     def on_mount(self) -> None:
         self._render_settings()
-        self.query_one("#settings", ListView).focus()
+        view = self.query_one("#settings", ListView)
+        view.index = 0
+        view.focus()
 
     def _render_settings(self) -> None:
         view = self.query_one("#settings", ListView)
@@ -606,7 +605,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
                 self.settings["context_window"],
                 self.settings["auto_compact_token_limit"],
             )
-        if key == "windows_desktop":
+        if key == "application_type":
             return self.settings["windows"]["mode"]
         return self.settings.get(key)
 
@@ -617,7 +616,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         if key == "context_profiles":
             maximum, compact = value
             return f"{maximum:,} MAX / {compact:,} COMPACT"
-        if key == "windows_desktop":
+        if key == "application_type":
             return f"{str(value).upper()} APP"
         return "OFF" if value in (False, None, "") else str(value).upper()
 
@@ -632,7 +631,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         if key == "context_profiles":
             self.app.push_screen(ContextProfilesScreen(self.catalog_path), self._context_profiles_finished)
             return
-        if key == "windows_desktop":
+        if key == "application_type":
             self.app.push_screen(
                 WindowsDesktopScreen(self.catalog_path, self.providers),
                 self._windows_desktop_finished,
@@ -680,9 +679,9 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     def _windows_desktop_finished(self, changed: bool | None) -> None:
         if changed:
             self.settings = load_settings(self.catalog_path)
-            self._refresh_setting("windows_desktop")
+            self._refresh_setting("application_type")
             self.query_one("#status", Static).update(
-                "Windows desktop mode saved. Press Enter to save settings."
+                "Application type saved. Press Enter to save settings."
             )
 
     def action_cancel(self) -> None:
@@ -782,6 +781,194 @@ class WindowsProgressScreen(ModalScreen[None]):
             self.dismiss(None)
 
 
+class RestoreConfirmScreen(ModalScreen[bool]):
+    CSS = """
+    RestoreConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
+    #restore-confirm { width: 76%; height: auto; padding: 1 2; border: round #3b82f6; background: #131d38; }
+    #restore-actions { height: auto; margin-top: 1; }
+    Button { width: 1fr; margin-right: 1; background: #2563eb; color: white; }
+    #cancel { background: #374151; }
+    """
+
+    def __init__(self, detail: str):
+        super().__init__()
+        self.detail = detail
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="restore-confirm"):
+            yield Static("RESTORE APPLICATION BACKUP")
+            yield Static(
+                f"{self.detail}\n\nThis replaces the current application archive. "
+                "The selected backup will not be modified."
+            )
+            with Horizontal(id="restore-actions"):
+                yield Button("Restore backup", id="restore", variant="error")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "restore")
+
+
+class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
+    TITLE = "Codexier"
+    CSS = """
+    Screen { background: #0b1020; color: #e7eefc; }
+    #shell { width: 96%; height: 1fr; min-height: 0; margin: 0 1; padding: 1 2; border: round #3b82f6; background: #131d38; }
+    #backups { height: 1fr; min-height: 0; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; }
+    #backups > ListItem { min-height: 4; padding: 1 2; }
+    ListItem.--highlight { background: #1d4ed8; color: white; }
+    #backup-info { height: auto; min-height: 5; margin-top: 1; color: #c7d2fe; }
+    #backup-actions { height: auto; min-height: 4; }
+    Button { width: 1fr; margin-right: 1; background: #2563eb; color: white; }
+    #back { background: #374151; }
+    .error { color: #ff6b8a; }
+    """
+    BINDINGS = [
+        Binding("enter", "select", "Restore", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
+        *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.backups = ()
+        self.progress_screen: WindowsProgressScreen | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="shell"):
+            yield Static("APPLICATION BACKUPS")
+            yield Static(
+                "Immutable app.asar.bak files are never overwritten. "
+                "Managed snapshots remain available for legacy restores."
+            )
+            yield ListView(id="backups")
+            yield Static("Loading backups …", id="backup-info")
+            with Horizontal(id="backup-actions"):
+                yield Button("Restore selected backup", id="restore", variant="primary")
+                yield Button("Back", id="back")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        await self._load_backups()
+        self.query_one("#backups", ListView).focus()
+
+    async def _load_backups(self) -> None:
+        from .desktop_patch import application_targets, desktop_backups
+
+        self.backups = tuple(
+            backup
+            for target in application_targets()
+            for backup in desktop_backups(
+                target, Path.home() / ".codex" / "codexier-desktop-backups"
+            )
+        )
+        view = self.query_one("#backups", ListView)
+        await view.clear()
+        for index, backup in enumerate(self.backups):
+            stamp = backup.modified_at.strftime("%Y-%m-%d %H:%M UTC")
+            state = "ORIGINAL" if backup.valid else "INVALID"
+            await view.append(
+                ListItem(
+                    Label(
+                        f"●  {backup.target.platform.upper()} · {backup.kind}: {state}\n"
+                        f"   [dim]{backup.path} · {backup.size_bytes:,} bytes · {stamp}[/dim]"
+                    ),
+                    id=f"backup-{index}",
+                )
+            )
+        view.index = 0 if self.backups else None
+        self._show_selected()
+
+    def _selected_backup(self):
+        item = self.query_one("#backups", ListView).highlighted_child
+        if not item or not item.id:
+            return None
+        try:
+            return self.backups[int(item.id.removeprefix("backup-"))]
+        except (IndexError, ValueError):
+            return None
+
+    def _show_selected(self) -> None:
+        backup = self._selected_backup()
+        info = self.query_one("#backup-info", Static)
+        if backup is None:
+            info.update("No application backups found for this system.")
+            return
+        info.remove_class("error")
+        info.update(
+            f"Platform   {backup.target.platform}\n"
+            f"Type       {backup.kind}\n"
+            f"Archive    {backup.archive_path}\n"
+            f"Size       {backup.size_bytes:,} bytes\n"
+            f"Modified   {backup.modified_at:%Y-%m-%d %H:%M UTC}\n"
+            f"Status     {backup.message}\n"
+            f"Restore to {backup.target.archive_path}"
+        )
+
+    @on(ListView.Highlighted)
+    def on_backup_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id == "backups":
+            self._show_selected()
+
+    def action_select(self) -> None:
+        backup = self._selected_backup()
+        info = self.query_one("#backup-info", Static)
+        if backup is None or not backup.valid:
+            info.update("Select a verified original backup before restoring.")
+            info.add_class("error")
+            return
+        self.app.push_screen(
+            RestoreConfirmScreen(
+                f"Restore {backup.kind.lower()}:\n{backup.path}\n\nto:\n{backup.target.archive_path}"
+            ),
+            self._restore_confirmed,
+        )
+
+    def _restore_confirmed(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.run_worker(self._restore_selected(), exclusive=True)
+
+    def _progress(self, percent: int, detail: str) -> None:
+        self.app.call_from_thread(self._show_progress, percent, detail)
+
+    def _show_progress(self, percent: int, detail: str) -> None:
+        if self.progress_screen is not None:
+            self.progress_screen.update_progress(percent, detail)
+
+    async def _restore_selected(self) -> None:
+        backup = self._selected_backup()
+        if backup is None:
+            return
+        self.progress_screen = WindowsProgressScreen("Restoring application backup")
+        await self.app.push_screen(self.progress_screen)
+        try:
+            from .desktop_patch import restore_desktop_patch
+
+            await asyncio.to_thread(
+                restore_desktop_patch,
+                backup.target,
+                backup.path,
+                self._progress,
+            )
+        except (ConfigError, OSError, PatchError) as exc:
+            self.progress_screen.finish(str(exc), error=True)
+            return
+        self.progress_screen.finish("Backup restored. Review the detailed log, then close.")
+        await self._load_backups()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "restore":
+            self.action_select()
+        elif event.button.id == "back":
+            self.action_cancel()
+
+
 class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
@@ -812,6 +999,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         providers: tuple[Provider, ...] = (),
         *,
         initial_tab: str | None = None,
+        platform: str | None = None,
     ):
         super().__init__()
         self.catalog_path = catalog_path
@@ -820,53 +1008,73 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         mode = initial_tab or self.settings["windows"]["mode"]
         self.initial_tab = f"{mode}-tab"
         self.progress_screen: WindowsProgressScreen | None = None
+        self.is_windows = (platform or sys.platform) == "win32"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
-            yield Static("WINDOWS DESKTOP APPS  /  SHARED LOWERCASE codexier PROFILE")
-            with TabbedContent(initial=self.initial_tab):
-                with TabPane("Official Codex App", id="official-tab"):
-                    with Horizontal(classes="official-layout"):
-                        with Vertical(classes="official-info"):
-                            yield Static("OFFICIAL APP", classes="section-title")
-                            yield Static(
-                                "Loading official app information …",
-                                id="official-app-info",
+            yield Static("APPLICATION TYPE  /  SHARED LOWERCASE codexier PROFILE")
+            if self.is_windows:
+                with TabbedContent(initial=self.initial_tab):
+                    with TabPane("Official Codex App", id="official-tab"):
+                        with Horizontal(classes="official-layout"):
+                            with Vertical(classes="official-info"):
+                                yield Static("OFFICIAL APP", classes="section-title")
+                                yield Static(
+                                    "Loading official app information …",
+                                    id="official-app-info",
+                                )
+                            with Vertical(classes="official-selection"):
+                                yield Static("CURRENT CONFIGURATION", classes="section-title")
+                                yield Static(
+                                    "Loading selected configuration …",
+                                    id="official-config-info",
+                                )
+                        with Horizontal(classes="actions"):
+                            yield Button(
+                                "Apply and launch official app",
+                                id="official-sync",
+                                variant="primary",
                             )
-                        with Vertical(classes="official-selection"):
-                            yield Static("CURRENT CONFIGURATION", classes="section-title")
-                            yield Static(
-                                "Loading selected configuration …",
-                                id="official-config-info",
-                            )
-                    with Horizontal(classes="actions"):
-                        yield Button(
-                            "Apply and launch official app",
-                            id="official-sync",
-                            variant="primary",
+                    with TabPane("Portable App", id="portable-tab"):
+                        yield Static(
+                            "Codexier clones the installed Store payload into LocalAppData, "
+                            "patches only that copy, and exposes every enabled provider."
                         )
-                with TabPane("Portable App", id="portable-tab"):
-                    yield Static(
-                        "Codexier clones the installed Store payload into LocalAppData, "
-                        "patches only that copy, and exposes every enabled provider."
+                        yield WindowsProviderListView(id="portable-providers", classes="provider-list")
+                        with Horizontal(classes="actions"):
+                            yield Button("Create portable app", id="portable-create")
+                            yield Button("Refresh portable status", id="portable-refresh")
+                            yield Button("Repair patch", id="portable-repair")
+                            yield Button(
+                                "Sync and launch portable app",
+                                id="portable-sync",
+                                variant="primary",
+                            )
+                yield Static("Loading Windows desktop status …", id="windows-status")
+            else:
+                yield Static(
+                    "Official macOS app patching uses the selected provider configuration. "
+                    "Portable application copies are currently Windows-only.",
+                    id="macos-info",
+                )
+                with Horizontal(classes="actions"):
+                    yield Button(
+                        "Apply official app patch",
+                        id="macos-apply",
+                        variant="primary",
                     )
-                    yield WindowsProviderListView(id="portable-providers", classes="provider-list")
-                    with Horizontal(classes="actions"):
-                        yield Button("Create portable app", id="portable-create")
-                        yield Button("Refresh portable status", id="portable-refresh")
-                        yield Button("Repair patch", id="portable-repair")
-                        yield Button(
-                            "Sync and launch portable app",
-                            id="portable-sync",
-                            variant="primary",
-                        )
-            yield Static("Loading Windows desktop status …", id="windows-status")
+                yield Static("macOS application patch controls are ready.", id="windows-status")
             with Horizontal(classes="actions"):
-                yield Button(self._shortcut_label(), id="portable-shortcut")
+                if self.is_windows:
+                    yield Button(self._shortcut_label(), id="portable-shortcut")
+                yield Button("View application backups", id="backups")
                 yield Button("Back to settings", id="back")
         yield Footer()
 
     async def on_mount(self) -> None:
+        if not self.is_windows:
+            self.query_one("#macos-apply", Button).focus()
+            return
         if not self.providers:
             from .provider_store import ProviderStore
 
@@ -893,6 +1101,8 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.run_worker(self._load_status(), exclusive=True)
 
     async def _load_status(self) -> None:
+        if not self.is_windows:
+            return
         status = self.query_one("#windows-status", Static)
         selected = self._official_selected_provider()
         self.query_one("#official-config-info", Static).update(
@@ -990,6 +1200,23 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.call_after_refresh(self._focus_windows_tabs)
 
     def on_key(self, event: events.Key) -> None:
+        if not self.is_windows:
+            if event.key not in {"left", "right"} or not isinstance(self.focused, Button):
+                return
+            buttons = tuple(
+                self.query_one(f"#{button_id}", Button)
+                for button_id in ("macos-apply", "backups", "back")
+            )
+            try:
+                index = buttons.index(self.focused)
+            except ValueError:
+                return
+            if event.key == "left" and index > 0:
+                buttons[index - 1].focus()
+            elif event.key == "right" and index < len(buttons) - 1:
+                buttons[index + 1].focus()
+            event.stop()
+            return
         if event.key == "down" and isinstance(self.focused, Tabs):
             self._focus_active_content()
             event.stop()
@@ -1049,6 +1276,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     def _action_title(action: str) -> str:
         return {
             "official-sync": "Syncing and launching Official Codex",
+            "macos-apply": "Applying official macOS app patch",
             "portable-create": "Creating Portable Codex",
             "portable-refresh": "Refreshing Portable Codex status",
             "portable-repair": "Repairing Portable Codex patch",
@@ -1061,10 +1289,10 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             self._official_selected_provider()
             if action == "official-sync"
             else None
-            if action == "portable-refresh"
+            if action in {"portable-refresh", "macos-apply"}
             else self._selected_provider("portable-providers")
         )
-        if action != "portable-refresh" and selected is None:
+        if action not in {"portable-refresh", "macos-apply"} and selected is None:
             status.update(
                 "Apply a provider from the main screen first."
                 if action == "official-sync"
@@ -1075,6 +1303,17 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.progress_screen = WindowsProgressScreen(self._action_title(action))
         await self.app.push_screen(self.progress_screen)
         try:
+            if action == "macos-apply":
+                from .desktop_patch import apply_desktop_patch, default_target
+
+                await asyncio.to_thread(
+                    apply_desktop_patch,
+                    default_target(),
+                    Path.home() / ".codex" / "codexier-desktop-backups",
+                    self._progress,
+                )
+                self.progress_screen.finish("Completed. Review the detailed log, then close.")
+                return
             from .windows_portable import (
                 create_portable_shortcut,
                 install_portable,
@@ -1172,7 +1411,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         if event.button.id == "back":
-            self.dismiss(True)
+            self.dismiss(None)
+        elif event.button.id == "backups":
+            self.app.push_screen(BackupManagerScreen())
         elif event.button.id == "portable-shortcut":
             self.run_worker(self._toggle_portable_shortcut(), exclusive=True)
         elif event.button.id:
