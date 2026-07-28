@@ -116,6 +116,8 @@ def test_generated_desktop_patch_keeps_custom_threads_visible_and_routes_new_sta
     assert "workspace" not in patch_source
     assert "if (i?.models.some((e) => e.id === t.model))" in patch_source
     assert "modelProvider: i.id" in patch_source
+    assert "codexSyncProviderChoiceForModelV4" in patch_source
+    assert "providerId: o.id" in patch_source
 
 
 def test_v6_upgrade_removes_synthetic_openai_and_installs_current_marker():
@@ -164,7 +166,7 @@ function codexUseProviderModels(e) {
     upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V6_TO_V7, "picker.js")
     upgraded = (upgraded_central + upgraded_picker).casefold()
 
-    assert "__codexdesktopmodelproviderspatchv18" in upgraded
+    assert "__codexdesktopmodelproviderspatchv19" in upgraded
     assert "chatgpt / openai" not in upgraded
     assert "defaultprovider: `openai`" not in upgraded
     assert "id === `openai`" not in upgraded
@@ -209,10 +211,23 @@ async function codexPatchAppServerParams(e, t) {
     upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V16_TO_V17, "picker.js")
     upgraded = (upgraded_central + upgraded_picker).casefold()
 
-    assert "__codexdesktopmodelproviderspatchv18" in upgraded
+    assert "__codexdesktopmodelproviderspatchv19" in upgraded
     assert "modelprovider: i.id" in upgraded
     assert "modelprovider: a[0].id" in upgraded
     assert "modelprovider: `codexier`" not in upgraded
+
+
+def test_v18_upgrade_contains_provider_identity_fixes():
+    from codexier.desktop_patch_macos import (
+        CENTRAL_DIFF_V18_TO_V19,
+        PICKER_DIFF_V18_TO_V19,
+    )
+
+    assert "__codexDesktopModelProvidersPatchV19" in CENTRAL_DIFF_V18_TO_V19
+    assert "__codexDesktopModelProvidersPatchV19" in PICKER_DIFF_V18_TO_V19
+    assert "codex.customModelProviders.v1" in CENTRAL_DIFF_V18_TO_V19
+    assert "codex.customModelProviders.v1" in PICKER_DIFF_V18_TO_V19
+    assert "codexSyncProviderChoiceForModelV4" in PICKER_DIFF_V18_TO_V19
 
 
 def test_missing_provider_config_is_not_replaced_with_examples(tmp_path: Path):
@@ -294,7 +309,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV18" in patched
+    assert "__codexDesktopModelProvidersPatchV19" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -334,7 +349,7 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_5848_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV18" in patched
+    assert "__codexDesktopModelProvidersPatchV19" in patched
     assert "p=codexUseProviderModels(p,d,y);" in patched
     assert "codex.customProviderSelection.v2.change" in patched
     assert "codex.customProviderRouting.v4" in patched
@@ -399,7 +414,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV18" in patched
+    assert "__codexDesktopModelProvidersPatchV19" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -458,7 +473,7 @@ def test_windows_patches_26721_5848_with_reactive_provider_labels(
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV18" in patched
+    assert "__codexDesktopModelProvidersPatchV19" in patched
     assert "children: e.description || `Custom Provider`" in patched
     assert "CodexProviderModelLabelV4" in patched
     assert "value:e,fallback:GM(t,e)?.displayName" in patched
