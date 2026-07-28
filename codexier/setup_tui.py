@@ -33,7 +33,7 @@ from textual.widgets import (
 )
 
 from .backup import atomic_write
-from .model_client import ModelFetchError, fetch_models
+from .model_client import LiveModel, ModelFetchError, fetch_models
 from .models import ModelDefinition, Provider
 from .desktop_patch_macos import PatchError
 from .errors import CatalogError, ConfigError, ValidationError
@@ -2178,19 +2178,19 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
                     else ()
                 ),
             ),
-            lambda selected: self._save_selected(name, url, key, models, selected),
+            lambda selected: self._save_selected(name, url, key, selected),
         )
 
-    def _save_selected(self, name, url, key, models, selected) -> None:
+    def _save_selected(self, name, url, key, selected) -> None:
         if not selected:
             return
-        base = provider_from_live_models(name, url, key, models)
+        base = provider_from_live_models(name, url, key, selected)
         provider = Provider(
             self.existing_provider.id if self.existing_provider else base.id,
             base.name,
             base.base_url,
             base.api_key,
-            tuple(ModelDefinition(model.id, model.label) for model in models if model.id in selected),
+            tuple(ModelDefinition(model.id, model.label) for model in selected),
             {},
             self.existing_provider.enabled if self.existing_provider else False,
         )
@@ -2207,7 +2207,57 @@ class ProviderFormScreen(_ProviderManagerShortcutIsolation, Screen[Provider | No
         self.dismiss(provider)
 
 
-class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...] | None]):
+class RenameModelScreen(ModalScreen[str | None]):
+    """Let the user assign a friendly display name to a model."""
+
+    CSS = """
+    RenameModelScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
+    #rename-shell { width: 76%; height: auto; padding: 1 2; border: round #3b82f6; background: #131d38; }
+    #rename-intro { color: #c7d2fe; height: auto; min-height: 2; margin-bottom: 1; }
+    #rename-input { height: 3; border: round #536d9e; background: #0b1020; color: #ffffff; }
+    #rename-input:focus { border: round #50fa7b; background: #111d3b; }
+    #rename-actions { height: auto; margin-top: 1; }
+    Button { width: 1fr; margin-right: 1; background: #2563eb; color: white; }
+    #rename-cancel { background: #374151; }
+    """
+
+    def __init__(self, model_id: str, current_label: str):
+        super().__init__()
+        self.model_id = model_id
+        self.current_label = current_label
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rename-shell"):
+            yield Static("RENAME MODEL")
+            yield Static(
+                f"Display name shown in Codexier and the desktop model picker for [bold]{self.model_id}[/bold].",
+                id="rename-intro",
+            )
+            yield Input(value=self.current_label, id="rename-input")
+            with Horizontal(id="rename-actions"):
+                yield Button("Save name", id="rename-save", variant="primary")
+                yield Button("Cancel", id="rename-cancel")
+
+    def on_mount(self) -> None:
+        field = self.query_one("#rename-input", Input)
+        field.focus()
+        field.cursor_position = len(field.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._save()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "rename-save":
+            self._save()
+        elif event.button.id == "rename-cancel":
+            self.dismiss(None)
+
+    def _save(self) -> None:
+        value = self.query_one("#rename-input", Input).value.strip()
+        self.dismiss(value or None)
+
+
+class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[LiveModel, ...] | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
@@ -2223,6 +2273,7 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
     """
     BINDINGS = [
         ("space", "toggle", "Toggle model"),
+        Binding("r", "rename", "Rename model"),
         Binding("enter", "save", "Save selected models", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
@@ -2240,7 +2291,8 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
             yield Static(f"AVAILABLE MODELS  /  {self.provider_name}")
             yield Static(
                 "Any model returned by this OpenAI-compatible API can be saved. "
-                "Select one or more models; there is no selection limit.",
+                "Select one or more models; press R to rename the highlighted model. "
+                "There is no selection limit.",
                 id="intro",
             )
             yield Static("LOADING AVAILABLE MODELS …", id="count")
@@ -2282,6 +2334,29 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
         self.query_one("#count", Static).update(f"SELECTED  {len(self.selected)}   (minimum 1)")
         self.query_one("#save", Button).disabled = not self.selected
 
+    def action_rename(self) -> None:
+        item = self.query_one("#models", ListView).highlighted_child
+        if not item or not item.id:
+            return
+        model_id = next((model.id for model in self.models if widget_id("live-model", model.id) == item.id), None)
+        if model_id is None:
+            return
+        current = next(model.label for model in self.models if model.id == model_id)
+        self.app.push_screen(
+            RenameModelScreen(model_id, current),
+            lambda new_label: self._apply_rename(model_id, new_label),
+        )
+
+    def _apply_rename(self, model_id: str, new_label: str | None) -> None:
+        if new_label is None:
+            return
+        self.models = tuple(
+            LiveModel(model.id, new_label) if model.id == model_id else model
+            for model in self.models
+        )
+        item = self.query_one("#models", ListView).query_one(f"#{widget_id('live-model', model_id)}", ListItem)
+        item.query_one(Label).update(self._label(model_id))
+
     def _label(self, model_id: str) -> str:
         model = next(model for model in self.models if model.id == model_id)
         mark = "●" if model_id in self.selected else "○"
@@ -2295,7 +2370,8 @@ class ModelPickerScreen(_ProviderManagerShortcutIsolation, Screen[tuple[str, ...
 
     def action_save(self) -> None:
         if self.selected:
-            self.dismiss(tuple(self.selected))
+            by_id = {model.id: model for model in self.models}
+            self.dismiss(tuple(by_id[model_id] for model_id in self.selected))
         else:
             self.query_one("#count", Static).update("SELECTED  0   (minimum 1)")
 

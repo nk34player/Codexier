@@ -1,6 +1,5 @@
 from pathlib import Path
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -14,6 +13,7 @@ from codexier.desktop_patch_macos import (
     CODEX_26721_4979_PREWARM_ANCHOR,
     CODEX_26721_4979_REACT_ANCHOR,
     CODEX_26721_4979_REQUEST_ANCHOR,
+    CODEX_26721_5848_COMPOSER_LABEL_ANCHOR,
     CODEX_26721_5848_LAYOUT,
     CODEX_26721_5848_MODEL_LABEL_ANCHOR,
     CODEX_26721_5848_SUBMENU_ANCHOR,
@@ -107,15 +107,18 @@ def test_provider_first_desktop_config_rejects_duplicate_models_within_provider(
         )
 
 
-def test_generated_desktop_patch_only_routes_new_thread_starts():
+def test_generated_desktop_patch_keeps_custom_threads_visible_and_routes_new_starts():
     patch_source = "\n".join((CENTRAL_V7_JAVASCRIPT, PICKER_V7_JAVASCRIPT))
     assert "thread/start" in patch_source
-    assert "thread/list" not in patch_source
+    assert "thread/list" in patch_source
+    assert "modelProviders: null" in patch_source
     assert "thread/read" not in patch_source
     assert "workspace" not in patch_source
+    assert "if (i?.models.some((e) => e.id === t.model))" in patch_source
+    assert "modelProvider: `codexier`" in patch_source
 
 
-def test_v6_upgrade_removes_synthetic_openai_and_installs_v7_marker():
+def test_v6_upgrade_removes_synthetic_openai_and_installs_current_marker():
     central = """function codexProviderRoutingFallbackV4() {
   return {
     version: 2,
@@ -161,7 +164,7 @@ function codexUseProviderModels(e) {
     upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V6_TO_V7, "picker.js")
     upgraded = (upgraded_central + upgraded_picker).casefold()
 
-    assert "__codexdesktopmodelproviderspatchv14" in upgraded
+    assert "__codexdesktopmodelproviderspatchv17" in upgraded
     assert "chatgpt / openai" not in upgraded
     assert "defaultprovider: `openai`" not in upgraded
     assert "id === `openai`" not in upgraded
@@ -170,6 +173,46 @@ function codexUseProviderModels(e) {
     assert "workspace" not in upgraded
     assert "defaultprovider: null" in upgraded
     assert "providers: []" in upgraded
+
+
+def test_v16_upgrade_uses_umbrella_provider_id():
+    from codexier.desktop_patch_macos import CENTRAL_DIFF_V16_TO_V17, PICKER_DIFF_V16_TO_V17
+
+    central = """function codexProviderRoutingStateV4() {
+  return (window.__codexDesktopModelProvidersPatchV16 ??= {
+    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
+}
+async function codexPatchAppServerParams(e, t) {
+  if (e === `thread/list`) {
+    let n = t != null && typeof t === `object` ? t : {};
+    return { ...n, modelProviders: null };
+  }
+  if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
+  let n = await codexLoadProviderRoutingConfigV4(!0), r;
+  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
+  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
+  if (i?.models.some((e) => e.id === t.model))
+    return { ...t, modelProvider: i.id };
+  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
+  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
+}
+"""
+    picker = """function codexPickerProviderRoutingStateV4() {
+  return (window.__codexDesktopModelProvidersPatchV16 ??= {
+    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
+  });
+}
+"""
+
+    upgraded_central = render_unified_diff(central, CENTRAL_DIFF_V16_TO_V17, "central.js")
+    upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V16_TO_V17, "picker.js")
+    upgraded = (upgraded_central + upgraded_picker).casefold()
+
+    assert "__codexdesktopmodelproviderspatchv17" in upgraded
+    assert "modelprovider: i.id" not in upgraded
+    assert "modelprovider: a[0].id" not in upgraded
+    assert "modelprovider: `codexier`" in upgraded
 
 
 def test_missing_provider_config_is_not_replaced_with_examples(tmp_path: Path):
@@ -251,7 +294,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV14" in patched
+    assert "__codexDesktopModelProvidersPatchV17" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -260,6 +303,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
     assert "codex.customProviderSelection.v2.change" in patched
     assert "children: e.description || `Custom Provider`" in patched
     assert "Provider config error" in patched
+    assert "codex.customProviderRouting.v4.change" in patched
     assert "o=codexPickerModelLabelV4(n,jol(n,a))" in patched
     assert "l=codexPickerModelLabelV4(r,jol(r,c))" in patched
     assert "t=await codexPatchAppServerParams(e,t)" in patched
@@ -282,6 +326,7 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
                 "contentClassName:`w-[280px]`,disabled:P||p==null,children:re",
                 "contentClassName:`w-[280px]`,disabled:fe,children:re",
                 CODEX_26721_5848_MODEL_LABEL_ANCHOR,
+                CODEX_26721_5848_COMPOSER_LABEL_ANCHOR,
             )
         ),
         encoding="utf-8",
@@ -289,7 +334,7 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_5848_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV14" in patched
+    assert "__codexDesktopModelProvidersPatchV17" in patched
     assert "p=codexUseProviderModels(p,d,y);" in patched
     assert "codex.customProviderSelection.v2.change" in patched
     assert "codex.customProviderRouting.v4" in patched
@@ -298,9 +343,11 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
     assert "children:[n.extras,l]" in patched
     assert "model:{extras:(0,wQ.jsx)(CodexCustomProviderPickerSection,{})" in patched
     assert "CodexProviderModelLabelV4" in patched
+    assert "codex.customProviderRouting.v4.change" in patched
     assert "typeof e === `string` ? e" in patched
     assert "typeof e?.id === `string` ? e.id : ``" in patched
     assert "value:e,fallback:GM(t,e)?.displayName" in patched
+    assert "CodexProviderModelLabelV4,{value:n,fallback:n}" in patched
     assert "disabled:P||p==null,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re" in patched
     assert "disabled:fe,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re" in patched
     assert "children:[(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),m," not in patched
@@ -350,7 +397,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV14" in patched
+    assert "__codexDesktopModelProvidersPatchV17" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -385,6 +432,7 @@ def test_windows_patches_26721_5848_with_reactive_provider_labels(
             "contentClassName:`w-[280px]`,disabled:P||p==null,children:re",
             "contentClassName:`w-[280px]`,disabled:fe,children:re",
             CODEX_26721_5848_MODEL_LABEL_ANCHOR,
+            CODEX_26721_5848_COMPOSER_LABEL_ANCHOR,
             "async sendConfigReadRequest(",
             "composer.intelligenceDropdown.tooltipmodelOptionsDisabled",
         )
@@ -408,7 +456,7 @@ def test_windows_patches_26721_5848_with_reactive_provider_labels(
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV14" in patched
+    assert "__codexDesktopModelProvidersPatchV17" in patched
     assert "children: e.description || `Custom Provider`" in patched
     assert "CodexProviderModelLabelV4" in patched
     assert "value:e,fallback:GM(t,e)?.displayName" in patched

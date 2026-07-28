@@ -107,7 +107,7 @@ def test_each_page_exposes_only_its_relevant_footer_actions(tmp_path):
 
             app.push_screen(ModelPickerScreen((LiveModel("model-a", "Model A"),), "Demo"))
             await pilot.pause()
-            assert _visible_actions(app.screen) == {"toggle", "save", "cancel"}
+            assert _visible_actions(app.screen) == {"toggle", "rename", "save", "cancel"}
             app.pop_screen()
             await pilot.pause()
 
@@ -155,7 +155,6 @@ def test_enter_saves_provider_after_model_selection(tmp_path):
                     "Demo",
                     "https://demo.example/v1/",
                     "secret",
-                    models,
                     selected,
                 ),
             )
