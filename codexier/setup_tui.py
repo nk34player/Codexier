@@ -979,6 +979,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     .official-layout { height: 1fr; min-height: 0; }
     .official-info { width: 2fr; padding: 1 2; border: round #263b68; background: #0f1730; }
     .official-selection { width: 1fr; margin-left: 1; padding: 1 2; border: round #3b82f6; background: #101b36; }
+    .macos-card { height: auto; max-width: 96; padding: 1 2; border: round #263b68; background: #0f1730; }
     .section-title { color: #8be9fd; text-style: bold; }
     .provider-list { height: 1fr; min-height: 0; border: round #263b68; background: #0f1730; }
     .provider-list > ListItem { min-height: 3; padding: 1 2; }
@@ -1005,16 +1006,16 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.catalog_path = catalog_path
         self.providers = providers
         self.settings = load_settings(catalog_path)
-        mode = initial_tab or self.settings["windows"]["mode"]
+        self.is_windows = (platform or sys.platform) == "win32"
+        mode = initial_tab or self.settings["windows"]["mode"] if self.is_windows else "official"
         self.initial_tab = f"{mode}-tab"
         self.progress_screen: WindowsProgressScreen | None = None
-        self.is_windows = (platform or sys.platform) == "win32"
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static("APPLICATION TYPE  /  SHARED LOWERCASE codexier PROFILE")
-            if self.is_windows:
-                with TabbedContent(initial=self.initial_tab):
+            with TabbedContent(initial=self.initial_tab):
+                if self.is_windows:
                     with TabPane("Official Codex App", id="official-tab"):
                         with Horizontal(classes="official-layout"):
                             with Vertical(classes="official-info"):
@@ -1050,20 +1051,33 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                                 id="portable-sync",
                                 variant="primary",
                             )
-                yield Static("Loading Windows desktop status …", id="windows-status")
-            else:
-                yield Static(
-                    "Official macOS app patching uses the selected provider configuration. "
-                    "Portable application copies are currently Windows-only.",
-                    id="macos-info",
-                )
-                with Horizontal(classes="actions"):
-                    yield Button(
-                        "Apply official app patch",
-                        id="macos-apply",
-                        variant="primary",
-                    )
-                yield Static("macOS application patch controls are ready.", id="windows-status")
+                else:
+                    with TabPane("Official App", id="official-tab"):
+                        with Vertical(classes="macos-card"):
+                            yield Static("OFFICIAL APP", classes="section-title")
+                            yield Static(
+                                "No editions or Codexier modifications are applied from this tab.\n"
+                                "To restore an earlier archive, use View application backups."
+                            )
+                    with TabPane("Custom Patches", id="custom-patches-tab"):
+                        with Vertical(classes="macos-card"):
+                            yield Static("CUSTOM PROVIDERS + CUSTOM MODELS", classes="section-title")
+                            yield Static(
+                                "Apply Codexier's custom provider and model patch to the installed "
+                                "macOS app. The original app.asar is preserved as app.asar.bak."
+                            )
+                            with Horizontal(classes="actions"):
+                                yield Button(
+                                    "Apply Custom Providers + Custom Models",
+                                    id="macos-custom-patch",
+                                    variant="primary",
+                                )
+            yield Static(
+                "Loading Windows desktop status …"
+                if self.is_windows
+                else "Choose a tab to view the official app or apply a custom patch.",
+                id="windows-status",
+            )
             with Horizontal(classes="actions"):
                 if self.is_windows:
                     yield Button(self._shortcut_label(), id="portable-shortcut")
@@ -1073,7 +1087,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
     async def on_mount(self) -> None:
         if not self.is_windows:
-            self.query_one("#macos-apply", Button).focus()
+            self.call_after_refresh(self._focus_windows_tabs)
             return
         if not self.providers:
             from .provider_store import ProviderStore
@@ -1174,6 +1188,14 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             )
         return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
 
+    def _active_macos_actions(self) -> tuple[Button, ...]:
+        ids = (
+            ("backups", "back")
+            if self.query_one(TabbedContent).active == "official-tab"
+            else ("macos-custom-patch", "backups", "back")
+        )
+        return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
+
     def _shortcut_label(self) -> str:
         state = "ON" if self.settings["windows"]["create_desktop_shortcut"] else "OFF"
         return f"Desktop shortcut: {state}"
@@ -1185,6 +1207,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.query_one(TabbedContent).query_one(Tabs).focus()
 
     def _focus_active_content(self) -> None:
+        if not self.is_windows:
+            self._active_macos_actions()[0].focus()
+            return
         if self.query_one(TabbedContent).active == "portable-tab":
             view = self.query_one("#portable-providers", ListView)
             if view.children:
@@ -1201,17 +1226,25 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
     def on_key(self, event: events.Key) -> None:
         if not self.is_windows:
-            if event.key not in {"left", "right"} or not isinstance(self.focused, Button):
+            if event.key == "down" and isinstance(self.focused, Tabs):
+                self._focus_active_content()
+                event.stop()
                 return
-            buttons = tuple(
-                self.query_one(f"#{button_id}", Button)
-                for button_id in ("macos-apply", "backups", "back")
-            )
+            if event.key not in {"up", "down", "left", "right"} or not isinstance(self.focused, Button):
+                return
+            buttons = self._active_macos_actions()
             try:
                 index = buttons.index(self.focused)
             except ValueError:
                 return
-            if event.key == "left" and index > 0:
+            if event.key == "up":
+                if index == 0:
+                    self._focus_windows_tabs()
+                else:
+                    buttons[index - 1].focus()
+            elif event.key == "down" and index < len(buttons) - 1:
+                buttons[index + 1].focus()
+            elif event.key == "left" and index > 0:
                 buttons[index - 1].focus()
             elif event.key == "right" and index < len(buttons) - 1:
                 buttons[index + 1].focus()
@@ -1276,7 +1309,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     def _action_title(action: str) -> str:
         return {
             "official-sync": "Syncing and launching Official Codex",
-            "macos-apply": "Applying official macOS app patch",
+            "macos-custom-patch": "Applying Custom Providers + Custom Models",
             "portable-create": "Creating Portable Codex",
             "portable-refresh": "Refreshing Portable Codex status",
             "portable-repair": "Repairing Portable Codex patch",
@@ -1289,10 +1322,10 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             self._official_selected_provider()
             if action == "official-sync"
             else None
-            if action in {"portable-refresh", "macos-apply"}
+            if action in {"portable-refresh", "macos-custom-patch"}
             else self._selected_provider("portable-providers")
         )
-        if action not in {"portable-refresh", "macos-apply"} and selected is None:
+        if action not in {"portable-refresh", "macos-custom-patch"} and selected is None:
             status.update(
                 "Apply a provider from the main screen first."
                 if action == "official-sync"
@@ -1303,7 +1336,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.progress_screen = WindowsProgressScreen(self._action_title(action))
         await self.app.push_screen(self.progress_screen)
         try:
-            if action == "macos-apply":
+            if action == "macos-custom-patch":
                 from .desktop_patch import apply_desktop_patch, default_target
 
                 await asyncio.to_thread(

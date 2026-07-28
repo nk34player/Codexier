@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from textual.app import App
-from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TabbedContent, Tabs
+from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TabbedContent, TabPane, Tabs
 
 from codexier.desktop_patch import DesktopBackup, DesktopPatchTarget
 from codexier.errors import ConfigError
@@ -209,7 +209,7 @@ def test_windows_back_returns_to_settings_without_exiting_the_manager(tmp_path: 
     asyncio.run(scenario())
 
 
-def test_application_type_shows_macos_controls_and_backup_manager_returns_to_parent(
+def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
     tmp_path: Path, monkeypatch
 ):
     archive = tmp_path / "ChatGPT.app" / "Contents" / "Resources" / "app.asar"
@@ -233,6 +233,9 @@ def test_application_type_shows_macos_controls_and_backup_manager_returns_to_par
         "codexier.desktop_patch.desktop_backups",
         lambda _target, _root: (backup,),
     )
+    settings = load_settings(tmp_path / "providers.json")
+    settings["windows"]["mode"] = "portable"
+    save_settings(tmp_path / "providers.json", settings)
 
     async def scenario() -> None:
         app = App()
@@ -241,7 +244,23 @@ def test_application_type_shows_macos_controls_and_backup_manager_returns_to_par
         async with app.run_test() as pilot:
             app.push_screen(desktop)
             await pilot.pause()
-            assert isinstance(desktop.query_one("#macos-apply", Button), Button)
+            tabs = desktop.query_one(TabbedContent).query_one(Tabs)
+            assert app.focused is tabs
+            assert desktop.query_one(TabbedContent).active == "official-tab"
+            assert isinstance(desktop.query_one("#macos-custom-patch", Button), Button)
+            assert str(desktop.query_one("#official-tab", TabPane)._title) == "Official App"
+            assert str(desktop.query_one("#custom-patches-tab", TabPane)._title) == "Custom Patches"
+            assert not desktop.query("#portable-providers")
+            await pilot.press("right")
+            assert desktop.query_one(TabbedContent).active == "custom-patches-tab"
+            await pilot.press("down")
+            assert app.focused is desktop.query_one("#macos-custom-patch", Button)
+            await pilot.press("down")
+            assert app.focused is desktop.query_one("#backups", Button)
+            await pilot.press("up")
+            assert app.focused is desktop.query_one("#macos-custom-patch", Button)
+            await pilot.press("up")
+            assert app.focused is tabs
             app.push_screen(backups)
             await pilot.pause()
             assert "Platform   darwin" in str(backups.query_one("#backup-info", Static).render())
@@ -255,6 +274,31 @@ def test_application_type_shows_macos_controls_and_backup_manager_returns_to_par
             backups.action_cancel()
             await pilot.pause()
             assert app.screen is desktop
+
+    asyncio.run(scenario())
+
+
+def test_macos_custom_patch_uses_existing_patch_flow(tmp_path: Path, monkeypatch):
+    target = DesktopPatchTarget("darwin", tmp_path / "ChatGPT.app" / "Contents" / "Resources" / "app.asar")
+    applied = []
+    monkeypatch.setattr("codexier.desktop_patch.default_target", lambda: target)
+
+    def apply_patch(selected_target, backup_root, progress):
+        applied.append((selected_target, backup_root))
+        progress(100, "completed: custom patch applied")
+
+    monkeypatch.setattr("codexier.desktop_patch.apply_desktop_patch", apply_patch)
+
+    async def scenario() -> None:
+        app = App()
+        desktop = WindowsDesktopScreen(tmp_path / "providers.json", platform="darwin")
+        async with app.run_test() as pilot:
+            app.push_screen(desktop)
+            await pilot.pause()
+            await desktop._run_action("macos-custom-patch")
+            assert applied == [(target, Path.home() / ".codex" / "codexier-desktop-backups")]
+            assert isinstance(app.screen, WindowsProgressScreen)
+            assert desktop.progress_screen.finished
 
     asyncio.run(scenario())
 
