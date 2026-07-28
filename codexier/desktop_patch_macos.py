@@ -44,8 +44,9 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV17"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV18"
 LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV17",
     b"__codexDesktopModelProvidersPatchV16",
     b"__codexDesktopModelProvidersPatchV15",
     b"__codexDesktopModelProvidersPatchV14",
@@ -918,7 +919,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV17 ??= {
+  return (window.__codexDesktopModelProvidersPatchV18 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -951,9 +952,9 @@ async function codexPatchAppServerParams(e, t) {
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
   if (i?.models.some((e) => e.id === t.model))
-    return { ...t, modelProvider: `codexier` };
+    return { ...t, modelProvider: i.id };
   let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
-  return a.length === 1 ? { ...t, modelProvider: `codexier` } : t;
+  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
 }"""
 
 PICKER_V7_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
@@ -1001,7 +1002,7 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV17 ??= {
+  return (window.__codexDesktopModelProvidersPatchV18 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1050,7 +1051,7 @@ function codexWriteProviderChoiceV4(e) {
 function codexPickerModelLabelV4(e, t) {
   let o = typeof e === `string` ? e : typeof e?.model === `string` ? e.model : typeof e?.id === `string` ? e.id : ``,
     n = codexPickerProviderRoutingStateV4().config,
-    r = codexReadProviderChoiceV4(n),
+    r = typeof e?.providerId === `string` ? e.providerId : codexReadProviderChoiceV4(n),
     i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider),
     s = i?.models.find((e) => e.id === o);
   if (s != null) return `${s.label} (${i.label})`;
@@ -1082,6 +1083,7 @@ function codexUseProviderModels(e, s, c) {
       ...e[0],
       id: t.id,
       model: t.id,
+      providerId: o.id,
       name: t.label,
       label: t.label,
       displayName: `${t.label} (${o.label})`,
@@ -1237,7 +1239,7 @@ def _v7_upgrade_diffs(
 @@ provider marker
  function codexProviderRoutingStateV4() {{
 -  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
-+  return (window.__codexDesktopModelProvidersPatchV17 ??= {{
++  return (window.__codexDesktopModelProvidersPatchV18 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
    }});
 """
@@ -1292,28 +1294,20 @@ CENTRAL_DIFF_V6_TO_V7, PICKER_DIFF_V6_TO_V7 = _v7_upgrade_diffs(
     "V6", "Provider for new tasks"
  )
 
-# V16 to V17: use umbrella provider ID "codexier" for all custom providers
-# so threads persist across provider switches (local-only mode without login)
+# V16 to V18: refresh patch state after switching new threads to the selected
+# provider route while hiding provider filters from thread listing.
 CENTRAL_DIFF_V16_TO_V17 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV17 ??= {
-     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-   });
-@@ use umbrella provider ID for thread persistence
-   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-   if (i?.models.some((e) => e.id === t.model))
--    return { ...t, modelProvider: i.id };
-+    return { ...t, modelProvider: `codexier` };
-   let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
--  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
-+  return a.length === 1 ? { ...t, modelProvider: `codexier` } : t;
++  return (window.__codexDesktopModelProvidersPatchV18 ??= {
+    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
 """
 
 PICKER_DIFF_V16_TO_V17 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV17 ??= {
++  return (window.__codexDesktopModelProvidersPatchV18 ??= {
      config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
    });
 """
