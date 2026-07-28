@@ -816,7 +816,20 @@ class WindowsProgressScreen(ModalScreen[None]):
             self.dismiss(None)
 
 
-class RestoreConfirmScreen(ModalScreen[bool]):
+class ConfirmationDialog(ModalScreen[bool]):
+    """Arrow-key navigation for two-button confirmation dialogs."""
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down", "left", "right"}:
+            return
+        buttons = tuple(self.query("Button"))
+        if self.focused not in buttons or len(buttons) < 2:
+            return
+        buttons[1 - buttons.index(self.focused)].focus()
+        event.stop()
+
+
+class RestoreConfirmScreen(ConfirmationDialog):
     CSS = """
     RestoreConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
     #restore-confirm { width: 76%; height: auto; padding: 1 2; border: round #3b82f6; background: #131d38; }
@@ -847,7 +860,7 @@ class RestoreConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "restore")
 
 
-class DeleteConfirmScreen(ModalScreen[bool]):
+class DeleteConfirmScreen(ConfirmationDialog):
     CSS = """
     DeleteConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
     #delete-confirm { width: 76%; height: auto; padding: 1 2; border: round #ef4444; background: #131d38; }
@@ -878,7 +891,7 @@ class DeleteConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "delete")
 
 
-class ForceCloseConfirmScreen(ModalScreen[bool]):
+class ForceCloseConfirmScreen(ConfirmationDialog):
     CSS = """
     ForceCloseConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
     #force-close-confirm { width: 76%; height: auto; padding: 1 2; border: round #ef4444; background: #131d38; }
@@ -908,6 +921,33 @@ class ForceCloseConfirmScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "force")
+
+
+class ReapplyConfirmScreen(ConfirmationDialog):
+    CSS = """
+    ReapplyConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
+    #reapply-confirm { width: 76%; height: auto; padding: 1 2; border: round #f59e0b; background: #131d38; }
+    #reapply-actions { height: auto; margin-top: 1; }
+    Button { width: 1fr; margin-right: 1; background: #b91c1c; color: white; }
+    #cancel { background: #374151; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="reapply-confirm"):
+            yield Static("RE-APPLY CUSTOM PATCHES")
+            yield Static(
+                "This app is already patched. Re-applying requires restoring the "
+                "immutable original backup first, then applying the selected patches."
+            )
+            with Horizontal(id="reapply-actions"):
+                yield Button("Restore original and re-apply", id="reapply", variant="error")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "reapply")
 
 
 class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
@@ -1614,7 +1654,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             "portable-sync": "Syncing and launching Portable Codex",
         }[action]
 
-    async def _run_action(self, action: str) -> None:
+    async def _run_action(self, action: str, reapply_confirmed: bool = False) -> None:
         status = self.query_one("#windows-status", Static)
         selected = (
             self._official_selected_provider()
@@ -1641,6 +1681,19 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
             target = default_target("darwin")
             app = target.archive_path.parents[2]
+            if not reapply_confirmed:
+                try:
+                    from .desktop_patch import macos_app_info
+
+                    app_info = await asyncio.to_thread(macos_app_info, target)
+                except (ConfigError, OSError):
+                    app_info = None
+                if app_info is not None and app_info.patch_status.patched:
+                    self.app.push_screen(
+                        ReapplyConfirmScreen(),
+                        lambda confirmed: self._reapply_confirmed(confirmed),
+                    )
+                    return
             try:
                 processes = await asyncio.to_thread(find_target_app_processes, app)
             except PatchError:
@@ -1734,6 +1787,10 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     def _force_close_confirmed(self, confirmed: bool | None) -> None:
         if confirmed:
             self.run_worker(self._run_action_with_force_close(), exclusive=True)
+
+    def _reapply_confirmed(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.run_worker(self._run_action("macos-apply-patches", True), exclusive=True)
 
     async def _run_action_with_force_close(self) -> None:
         self.progress_screen = WindowsProgressScreen(self._action_title("macos-apply-patches"))
