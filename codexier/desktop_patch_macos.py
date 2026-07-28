@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import plistlib
 import re
+import signal
 import shlex
 import shutil
 import struct
@@ -1751,7 +1752,7 @@ def stop_target_app_processes(app: Path, allow_running: bool) -> None:
     gracefully_close_target_app_processes(app)
 
 
-def gracefully_close_target_app_processes(app: Path) -> bool:
+def gracefully_close_target_app_processes(app: Path, *, force: bool = False) -> bool:
     """Ask the app to quit and skip safely if it remains open.
 
     Unlike the standalone legacy installer, automatic sync never sends a
@@ -1791,6 +1792,26 @@ def gracefully_close_target_app_processes(app: Path) -> bool:
     remaining = wait_for_app_processes_to_exit(app, 8.0)
     if remaining:
         details = ", ".join(str(pid) for pid, _command in remaining)
+        if force:
+            terminal_status(
+                "FORCE CLOSE",
+                "Forcefully terminating the remaining ChatGPT processes.",
+                "31",
+                detail=f"PIDs: {details}",
+            )
+            for pid, _command in remaining:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    continue
+                except OSError as exc:
+                    raise PatchSkipped(
+                        f"Desktop patch skipped: could not force-close PID {pid} ({exc})."
+                    ) from exc
+            remaining = wait_for_app_processes_to_exit(app, 3.0)
+            if not remaining:
+                terminal_status("CLOSED", "The target ChatGPT app was forcefully closed.", "32")
+                return True
         raise PatchSkipped(
             "Desktop patch skipped: ChatGPT is still running "
             f"(PIDs: {details}). Close it normally, then sync enabled providers again."

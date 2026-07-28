@@ -862,6 +862,38 @@ class DeleteConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "delete")
 
 
+class ForceCloseConfirmScreen(ModalScreen[bool]):
+    CSS = """
+    ForceCloseConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
+    #force-close-confirm { width: 76%; height: auto; padding: 1 2; border: round #ef4444; background: #131d38; }
+    #force-close-actions { height: auto; margin-top: 1; }
+    Button { width: 1fr; margin-right: 1; background: #b91c1c; color: white; }
+    #cancel { background: #374151; }
+    """
+
+    def __init__(self, pids: tuple[int, ...]):
+        super().__init__()
+        self.pids = pids
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="force-close-confirm"):
+            yield Static("CHATGPT IS STILL RUNNING")
+            yield Static(
+                "ChatGPT must be closed before patching. "
+                f"Forcefully kill the detected ChatGPT processes (PIDs: {', '.join(map(str, self.pids))}) "
+                "and continue applying patches?\n\nUnsaved work may be lost."
+            )
+            with Horizontal(id="force-close-actions"):
+                yield Button("Force kill and apply patches", id="force", variant="error")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "force")
+
+
 class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
@@ -1583,6 +1615,22 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             )
             status.add_class("error")
             return
+        if action == "macos-apply-patches":
+            from .desktop_patch import default_target
+            from .desktop_patch_macos import find_target_app_processes
+
+            target = default_target("darwin")
+            app = target.archive_path.parents[2]
+            try:
+                processes = await asyncio.to_thread(find_target_app_processes, app)
+            except PatchError:
+                processes = []
+            if processes:
+                self.app.push_screen(
+                    ForceCloseConfirmScreen(tuple(pid for pid, _ in processes)),
+                    lambda confirmed: self._force_close_confirmed(confirmed),
+                )
+                return
         self.progress_screen = WindowsProgressScreen(self._action_title(action))
         await self.app.push_screen(self.progress_screen)
         try:
@@ -1662,6 +1710,29 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         status.remove_class("error")
         await self._load_status()
         self.progress_screen.finish("Completed. Review the detailed log, then close.")
+
+    def _force_close_confirmed(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.run_worker(self._run_action_with_force_close(), exclusive=True)
+
+    async def _run_action_with_force_close(self) -> None:
+        self.progress_screen = WindowsProgressScreen(self._action_title("macos-apply-patches"))
+        await self.app.push_screen(self.progress_screen)
+        try:
+            from .desktop_patch import apply_desktop_patch, default_target
+
+            await asyncio.to_thread(
+                apply_desktop_patch,
+                default_target(),
+                Path.home() / ".codex" / "codexier-desktop-backups",
+                self._progress,
+                True,
+            )
+            self.progress_screen.finish("Completed. Review the detailed log, then close.")
+        except (ConfigError, PatchError, OSError) as exc:
+            self.query_one("#windows-status", Static).update(str(exc))
+            self.query_one("#windows-status", Static).add_class("error")
+            self.progress_screen.finish(str(exc), error=True)
 
     async def _toggle_portable_shortcut(self) -> None:
         status = self.query_one("#windows-status", Static)

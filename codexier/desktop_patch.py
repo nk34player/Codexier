@@ -476,6 +476,7 @@ def apply_desktop_patch(
     target: DesktopPatchTarget,
     backup_root: Path,
     progress: PatchProgress | None = None,
+    force_close: bool = False,
 ) -> DesktopPatchStatus:
     """Patch a supported desktop archive without risking a successful sync.
 
@@ -522,7 +523,10 @@ def apply_desktop_patch(
             report(emit, "validation", "validated the provider configuration and app archive")
             was_running = bool(find_target_app_processes(app))
             report(emit, "process stop", "requesting a graceful close of the desktop app")
-            gracefully_close_target_app_processes(app)
+            if force_close:
+                gracefully_close_target_app_processes(app, force=True)
+            else:
+                gracefully_close_target_app_processes(app)
             patch_app(app, config, backup_root, False, emit)
             if was_running:
                 report(emit, "restart", "reopening the desktop app")
