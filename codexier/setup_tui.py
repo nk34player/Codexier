@@ -1248,6 +1248,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                                     "No editions or Codexier modifications are applied from this tab.\n"
                                     "To restore an earlier archive, use View application backups."
                                 )
+                                yield Static("CURRENT STATE  /  Loading …", id="macos-app-state")
                     with TabPane("Custom Patches", id="custom-patches-tab"):
                         with Vertical(classes="macos-card"):
                             yield Static("SELECT PATCHES TO APPLY", classes="section-title")
@@ -1362,6 +1363,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             return
         state = "PATCHED" if app.patch_status.patched else "UNMODIFIED"
         backup = "Available" if app.sidecar_exists else "Not created yet"
+        self.query_one("#macos-app-state", Static).update(
+            f"CURRENT STATE  /  {'PATCHED' if app.patch_status.patched else 'OFFICIAL'}"
+        )
         info.remove_class("error")
         info.update(
             f"Name        {app.app_name}\n"
