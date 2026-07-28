@@ -67,6 +67,19 @@ def test_restore_uses_exact_backup(tmp_path: Path):
     assert not patch_status(app).patched
 
 
+def test_manual_backup_is_verified_and_does_not_modify_installed_archive(tmp_path: Path):
+    app = target(tmp_path, valid_asar(b"original"))
+    events: list[tuple[int, str]] = []
+
+    backup = backup_desktop_patch(
+        app, tmp_path / "backups", lambda *event: events.append(event)
+    )
+
+    assert (backup / "app.asar").read_bytes() == app.archive_path.read_bytes()
+    assert app.archive_path.read_bytes() == valid_asar(b"original")
+    assert events[-1] == (MILESTONES["completion"], f"completion: manual backup created: {backup}")
+
+
 def test_immutable_sidecar_backup_is_created_once_and_never_overwritten(tmp_path: Path):
     app = target(tmp_path, valid_asar(b"original"))
     sidecar = app.archive_path.with_name("app.asar.bak")

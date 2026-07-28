@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from textual.app import App
 from textual.widgets import (
     Button,
-    Checkbox,
     Label,
     ListItem,
     ListView,
@@ -285,9 +284,12 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
             assert "Name        ChatGPT" in str(
                 desktop.query_one("#macos-app-info", Static).render()
             )
-            patch = desktop.query_one("#macos-patch-custom-providers-models", Checkbox)
+            patches = desktop.query_one("#macos-patches", ListView)
+            patch = desktop.query_one(
+                "#macos-patch-custom-providers-models", ListItem
+            )
             apply = desktop.query_one("#macos-apply-patches", Button)
-            assert patch.value
+            assert "SELECTED" in str(patch.query_one(Label).render())
             assert not apply.disabled
             assert str(desktop.query_one("#official-tab", TabPane)._title) == "Official App"
             assert str(desktop.query_one("#custom-patches-tab", TabPane)._title) == "Custom Patches"
@@ -295,12 +297,12 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
             await pilot.press("right")
             assert desktop.query_one(TabbedContent).active == "custom-patches-tab"
             await pilot.press("down")
-            assert app.focused is patch
-            await pilot.press("space")
-            assert not patch.value
+            assert app.focused is patches
+            await pilot.press("enter")
+            assert "OFF" in str(patch.query_one(Label).render())
             assert apply.disabled
-            await pilot.press("space")
-            assert patch.value
+            await pilot.press("enter")
+            assert "SELECTED" in str(patch.query_one(Label).render())
             assert not apply.disabled
             await pilot.press("down")
             assert app.focused is apply
@@ -309,7 +311,7 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
             await pilot.press("up")
             assert app.focused is apply
             await pilot.press("up")
-            assert app.focused is patch
+            assert app.focused is patches
             await pilot.press("up")
             assert app.focused is tabs
             app.push_screen(backups)

@@ -86,6 +86,7 @@ def test_each_page_exposes_only_its_relevant_footer_actions(tmp_path):
 
         async with app.run_test() as pilot:
             await pilot.pause()
+            assert not app.query("ProviderManagerApp Button")
             assert _visible_actions(app.screen) == {
                 "add",
                 "edit",

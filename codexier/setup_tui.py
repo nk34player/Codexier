@@ -15,7 +15,6 @@ from textual.screen import ModalScreen, Screen
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
-    Checkbox,
     Footer,
     Header,
     Input,
@@ -237,10 +236,8 @@ class ProviderManagerApp(App[Provider | None]):
     #brand { height: auto; min-height: 5; padding: 1 2; background: #131d38; border: round #3b82f6; color: #8be9fd; }
     #providers { width: 1fr; height: 1fr; min-height: 0; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     #providers > ListItem { min-height: 5; padding: 1 3; }
-    #actions { height: auto; min-height: 4; margin-top: 1; overflow-x: auto; scrollbar-size: 1 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
-    Button { margin-right: 1; background: #2563eb; color: white; }
     #status { height: 3; color: #8be9fd; }
     .error { color: #ff6b8a; }
     """
@@ -281,7 +278,8 @@ class ProviderManagerApp(App[Provider | None]):
         with Vertical(id="shell"):
             yield Static(
                 "CODEXIER  /  PROVIDER CATALOG\n"
-                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier fallback."
+                "Toggle the providers you want to sync. Select an enabled provider as the normal Codexier fallback.\n"
+                "Press Enter to sync enabled providers; keyboard shortcuts are shown below."
                 + (
                     f"\nApplication type: {self.app_settings['windows']['mode'].title()} app"
                     if sys.platform == "win32"
@@ -290,13 +288,6 @@ class ProviderManagerApp(App[Provider | None]):
                 id="brand",
             )
             yield ProviderListView(id="providers")
-            with Horizontal(id="actions"):
-                yield Button("Sync enabled providers  ›", id="use", variant="primary")
-                yield Button("Toggle enabled", id="toggle")
-                yield Button("＋ Add provider", id="add")
-                yield Button("✎ Edit provider", id="edit")
-                yield Button("× Delete provider", id="delete", variant="error")
-                yield Button("Back / Quit", id="back")
             yield Static("Selected provider: none", id="status")
         yield Footer()
 
@@ -736,6 +727,25 @@ class WindowsProviderListView(ListView):
             self.screen._focus_windows_tabs()  # type: ignore[attr-defined]
 
 
+class MacOSPatchListView(ListView):
+    """Toggle custom patches while preserving Settings-style list navigation."""
+
+    def action_select_cursor(self) -> None:
+        self.screen._toggle_selected_macos_patch()  # type: ignore[attr-defined]
+
+    def action_cursor_down(self) -> None:
+        if self.index is not None and self.index < len(self.children) - 1:
+            super().action_cursor_down()
+        else:
+            self.screen._focus_macos_patch_apply()  # type: ignore[attr-defined]
+
+    def action_cursor_up(self) -> None:
+        if self.index not in (None, 0):
+            super().action_cursor_up()
+        else:
+            self.screen._focus_windows_tabs()  # type: ignore[attr-defined]
+
+
 class WindowsProgressScreen(ModalScreen[None]):
     """Uncancellable progress view; the close button appears only after work ends."""
 
@@ -869,6 +879,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
     """
     BINDINGS = [
         Binding("enter", "select", "Restore", priority=True),
+        Binding("b", "manual_backup", "Manual backup", priority=True),
         Binding("delete", "delete", "Delete", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
@@ -876,6 +887,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
 
     def __init__(self):
         super().__init__()
+        self.targets = ()
         self.backups = ()
         self.progress_screen: WindowsProgressScreen | None = None
 
@@ -884,12 +896,14 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
             yield Static("APPLICATION BACKUPS")
             yield Static(
                 "Immutable app.asar.bak files are never overwritten. "
-                "Managed snapshots remain available for legacy restores."
+                "Managed snapshots remain available for legacy restores. "
+                "Press B to create a manual snapshot."
             )
             yield ListView(id="backups")
             yield Static("Loading backups …", id="backup-info")
             with Horizontal(id="backup-actions"):
                 yield Button("Restore selected backup", id="restore", variant="primary")
+                yield Button("Create manual backup", id="manual", variant="primary")
                 yield Button("Delete selected backup", id="delete", variant="error")
                 yield Button("Back", id="back")
         yield Footer()
@@ -901,12 +915,12 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
     async def _load_backups(self) -> None:
         from .desktop_patch import application_targets, desktop_backups
 
+        self.targets = application_targets()
+        backup_root = Path.home() / ".codex" / "codexier-desktop-backups"
         self.backups = tuple(
             backup
-            for target in application_targets()
-            for backup in desktop_backups(
-                target, Path.home() / ".codex" / "codexier-desktop-backups"
-            )
+            for target in self.targets
+            for backup in desktop_backups(target, backup_root)
         )
         view = self.query_one("#backups", ListView)
         await view.clear()
@@ -990,6 +1004,38 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
         if confirmed:
             self.run_worker(self._delete_selected(), exclusive=True)
 
+    def action_manual_backup(self) -> None:
+        selected = self._selected_backup()
+        target = selected.target if selected is not None else (
+            self.targets[0] if self.targets else None
+        )
+        info = self.query_one("#backup-info", Static)
+        if target is None:
+            info.update("No supported installed application was found to back up.")
+            info.add_class("error")
+            return
+        self.run_worker(self._manual_backup(target), exclusive=True)
+
+    async def _manual_backup(self, target) -> None:
+        self.progress_screen = WindowsProgressScreen("Creating manual application backup")
+        await self.app.push_screen(self.progress_screen)
+        try:
+            from .desktop_patch import backup_desktop_patch
+
+            backup = await asyncio.to_thread(
+                backup_desktop_patch,
+                target,
+                Path.home() / ".codex" / "codexier-desktop-backups",
+                self._progress,
+            )
+        except (ConfigError, OSError, PatchError) as exc:
+            self.progress_screen.finish(str(exc), error=True)
+            return
+        self.progress_screen.finish(
+            f"Manual backup created at {backup}. Review the log, then close."
+        )
+        await self._load_backups()
+
     def _progress(self, percent: int, detail: str) -> None:
         self.app.call_from_thread(self._show_progress, percent, detail)
 
@@ -1046,6 +1092,8 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "restore":
             self.action_select()
+        elif event.button.id == "manual":
+            self.action_manual_backup()
         elif event.button.id == "delete":
             self.action_delete()
         elif event.button.id == "back":
@@ -1062,8 +1110,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     .official-layout { height: 1fr; min-height: 0; }
     .official-info { width: 2fr; padding: 1 2; border: round #263b68; background: #0f1730; }
     .official-selection { width: 1fr; margin-left: 1; padding: 1 2; border: round #3b82f6; background: #101b36; }
-    .macos-card { height: auto; max-width: 96; padding: 1 2; border: round #263b68; background: #0f1730; }
-    .patch-description { color: #c7d2fe; padding: 0 2 1 2; }
+    .macos-card { height: 1fr; min-height: 0; max-width: 96; padding: 1 2; border: round #263b68; background: #0f1730; }
+    #macos-patches { height: 1fr; min-height: 0; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #macos-patches > ListItem { min-height: 5; padding: 1 3; }
     .section-title { color: #8be9fd; text-style: bold; }
     .provider-list { height: 1fr; min-height: 0; border: round #263b68; background: #0f1730; }
     .provider-list > ListItem { min-height: 3; padding: 1 2; }
@@ -1093,6 +1142,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.is_windows = (platform or sys.platform) == "win32"
         mode = initial_tab or self.settings["windows"]["mode"] if self.is_windows else "official"
         self.initial_tab = f"{mode}-tab"
+        self.macos_selected_patches = {patch_id for patch_id, _, _ in _MACOS_PATCHES}
         self.progress_screen: WindowsProgressScreen | None = None
 
     def compose(self) -> ComposeResult:
@@ -1153,13 +1203,16 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                     with TabPane("Custom Patches", id="custom-patches-tab"):
                         with Vertical(classes="macos-card"):
                             yield Static("SELECT PATCHES TO APPLY", classes="section-title")
-                            for patch_id, title, description in _MACOS_PATCHES:
-                                yield Checkbox(
-                                    title,
-                                    value=True,
-                                    id=f"macos-patch-{patch_id}",
-                                )
-                                yield Static(description, classes="patch-description")
+                            with MacOSPatchListView(id="macos-patches"):
+                                for patch_id, title, description in _MACOS_PATCHES:
+                                    yield ListItem(
+                                        Label(
+                                            self._macos_patch_label(
+                                                patch_id, title, description
+                                            )
+                                        ),
+                                        id=f"macos-patch-{patch_id}",
+                                    )
                             with Horizontal(classes="actions"):
                                 yield Button(
                                     "Apply selected patches",
@@ -1181,6 +1234,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
 
     async def on_mount(self) -> None:
         if not self.is_windows:
+            self.query_one("#macos-patches", ListView).index = 0
             self.call_after_refresh(self._focus_windows_tabs)
             self.run_worker(self._load_macos_app_info(), exclusive=True)
             return
@@ -1313,15 +1367,12 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             )
         return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
 
-    def _active_macos_actions(self) -> tuple[Button | Checkbox, ...]:
+    def _active_macos_actions(self) -> tuple[Button | ListView, ...]:
         ids = (
             ("backups", "back")
             if self.query_one(TabbedContent).active == "official-tab"
             else (
-                *(
-                    f"macos-patch-{patch_id}"
-                    for patch_id, _, _ in _MACOS_PATCHES
-                ),
+                "macos-patches",
                 "macos-apply-patches",
                 "backups",
                 "back",
@@ -1330,7 +1381,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         return tuple(
             self.query_one(
                 f"#{widget_id}",
-                Checkbox if widget_id.startswith("macos-patch-") else Button,
+                ListView if widget_id == "macos-patches" else Button,
             )
             for widget_id in ids
         )
@@ -1339,16 +1390,36 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         return tuple(
             patch_id
             for patch_id, _, _ in _MACOS_PATCHES
-            if self.query_one(f"#macos-patch-{patch_id}", Checkbox).value
+            if patch_id in self.macos_selected_patches
         )
 
     def _refresh_macos_patch_button(self) -> None:
-        self.query_one("#macos-apply-patches", Button).disabled = not self._selected_macos_patches()
+        self.query_one("#macos-apply-patches", Button).disabled = (
+            not self._selected_macos_patches()
+        )
 
-    @on(Checkbox.Changed)
-    def _on_macos_patch_changed(self, event: Checkbox.Changed) -> None:
-        if event.checkbox.id and event.checkbox.id.startswith("macos-patch-"):
-            self._refresh_macos_patch_button()
+    def _macos_patch_label(self, patch_id: str, title: str, description: str) -> str:
+        selected = patch_id in self.macos_selected_patches
+        return f"{'●' if selected else '○'}  {title}: {'SELECTED' if selected else 'OFF'}\n   [dim]{description}[/dim]"
+
+    def _toggle_selected_macos_patch(self) -> None:
+        view = self.query_one("#macos-patches", ListView)
+        item = view.highlighted_child
+        if item is None or item.id is None:
+            return
+        patch_id = item.id.removeprefix("macos-patch-")
+        patch = next(
+            (patch for patch in _MACOS_PATCHES if patch[0] == patch_id),
+            None,
+        )
+        if patch is None:
+            return
+        if patch_id in self.macos_selected_patches:
+            self.macos_selected_patches.remove(patch_id)
+        else:
+            self.macos_selected_patches.add(patch_id)
+        item.query_one(Label).update(self._macos_patch_label(*patch))
+        self._refresh_macos_patch_button()
 
     def _shortcut_label(self) -> str:
         state = "ON" if self.settings["windows"]["create_desktop_shortcut"] else "OFF"
@@ -1374,6 +1445,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     def _focus_first_windows_action(self) -> None:
         self._active_windows_actions()[0].focus()
 
+    def _focus_macos_patch_apply(self) -> None:
+        self.query_one("#macos-apply-patches", Button).focus()
+
     @on(TabbedContent.TabActivated)
     def _on_windows_tab_activated(self, _: TabbedContent.TabActivated) -> None:
         self.call_after_refresh(self._focus_windows_tabs)
@@ -1385,7 +1459,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                 event.stop()
                 return
             if event.key not in {"up", "down", "left", "right"} or not isinstance(
-                self.focused, (Button, Checkbox)
+                self.focused, Button
             ):
                 return
             buttons = self._active_macos_actions()

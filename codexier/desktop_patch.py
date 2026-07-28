@@ -300,13 +300,49 @@ def macos_app_info(target: DesktopPatchTarget) -> MacOSAppInfo:
     )
 
 
-def backup_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+def backup_desktop_patch(
+    target: DesktopPatchTarget,
+    backup_root: Path,
+    progress: PatchProgress | None = None,
+) -> Path:
+    """Create a verified, managed snapshot without changing the installed app."""
+    report(progress, "validation", f"validating installed archive {target.archive_path}")
+    if not target.archive_path.is_file():
+        raise ConfigError(f"Installed archive is unavailable: {target.archive_path}")
+    backup_root.mkdir(parents=True, exist_ok=True)
+    if target.platform == "darwin":
+        try:
+            from .desktop_patch_macos import make_backup
+
+            with (
+                target.archive_path.parents[2] / "Contents" / "Info.plist"
+            ).open("rb") as handle:
+                info = plistlib.load(handle)
+            report(progress, "backup", "creating a complete macOS app snapshot")
+            backup = make_backup(
+                target.archive_path.parents[2],
+                backup_root,
+                str(info.get("CFBundleShortVersionString", "unknown")),
+                str(info.get("CFBundleVersion", "unknown")),
+            )
+        except (OSError, plistlib.InvalidFileException, KeyError) as exc:
+            raise ConfigError(f"Could not create macOS application backup: {exc}") from exc
+        report(progress, "verification", f"verifying managed snapshot {backup}")
+        report(progress, "completion", f"manual backup created: {backup}")
+        return backup
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
     backup = backup_root / f"{target.platform}-{stamp}"
-    backup.mkdir(parents=True, exist_ok=False)
-    _copy(target.archive_path, backup / "app.asar")
-    if target.metadata_path and target.metadata_path.exists():
-        _copy(target.metadata_path, backup / target.metadata_path.name)
+    backup.mkdir(exist_ok=False)
+    try:
+        report(progress, "backup", f"copying app.asar to {backup}")
+        _copy(target.archive_path, backup / "app.asar")
+        if target.metadata_path and target.metadata_path.exists():
+            _copy(target.metadata_path, backup / target.metadata_path.name)
+        report(progress, "verification", f"verifying managed snapshot {backup}")
+    except Exception:
+        shutil.rmtree(backup, ignore_errors=True)
+        raise
+    report(progress, "completion", f"manual backup created: {backup}")
     return backup
 
 
@@ -345,7 +381,14 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
             if (
                 backup.is_symlink()
                 or not backup.is_dir()
-                or not backup.name.startswith(f"{target.platform}-")
+                or not (
+                    backup.name.startswith(f"{target.platform}-")
+                    or (
+                        target.platform == "darwin"
+                        and backup.name.startswith("ChatGPT-")
+                        and backup.name.endswith(".app")
+                    )
+                )
             ):
                 continue
             archive = _managed_snapshot_archive(target, backup)
@@ -411,7 +454,14 @@ def delete_desktop_backup(
             backup.is_symlink()
             or not backup.is_dir()
             or backup.parent.resolve() != root
-            or not backup.name.startswith(f"{target.platform}-")
+            or not (
+                backup.name.startswith(f"{target.platform}-")
+                or (
+                    target.platform == "darwin"
+                    and backup.name.startswith("ChatGPT-")
+                    and backup.name.endswith(".app")
+                )
+            )
         ):
             raise ConfigError(f"Refusing to delete backup outside the managed backup root: {backup}")
         report(progress, "atomic replacement", f"deleting managed snapshot {backup}")
