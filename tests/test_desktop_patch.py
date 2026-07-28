@@ -1,4 +1,5 @@
 from pathlib import Path
+import plistlib
 import struct
 
 import pytest
@@ -9,11 +10,14 @@ from codexier.desktop_patch import (
     DesktopPatchTarget,
     apply_desktop_patch,
     backup_desktop_patch,
+    delete_desktop_backup,
     desktop_backups,
     default_target,
+    macos_app_info,
     patch_status,
     restore_desktop_patch,
 )
+from codexier.errors import ConfigError
 from codexier.desktop_patch_macos import PatchSkipped
 from codexier.patch_progress import MILESTONES
 from codexier.process_manager import ChatGPTProcess
@@ -107,6 +111,88 @@ def test_backup_inventory_and_restore_preserve_immutable_sidecar(
     restore_desktop_patch(app, sidecar)
     assert app.archive_path.read_bytes() == b"original"
     assert sidecar.read_bytes() == b"original"
+
+
+def test_macos_app_info_reports_installed_archive_details(tmp_path: Path):
+    app = tmp_path / "ChatGPT.app"
+    contents = app / "Contents"
+    archive = contents / "Resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"original")
+    archive.with_name("app.asar.bak").write_bytes(b"original")
+    with (contents / "Info.plist").open("wb") as handle:
+        plistlib.dump(
+            {
+                "CFBundleDisplayName": "ChatGPT",
+                "CFBundleIdentifier": "com.openai.chat",
+                "CFBundleShortVersionString": "1.2.3",
+                "CFBundleVersion": "456",
+            },
+            handle,
+        )
+
+    info = macos_app_info(DesktopPatchTarget("darwin", archive))
+
+    assert info.app_path == app
+    assert info.app_name == "ChatGPT"
+    assert info.bundle_identifier == "com.openai.chat"
+    assert (info.version, info.build) == ("1.2.3", "456")
+    assert info.archive_path == archive
+    assert info.archive_size_bytes == len(b"original")
+    assert not info.patch_status.patched
+    assert info.sidecar_exists
+
+
+@pytest.mark.parametrize("create_app", (False, True))
+def test_macos_app_info_reports_missing_or_unreadable_app(
+    tmp_path: Path, create_app: bool
+):
+    archive = tmp_path / "ChatGPT.app" / "Contents" / "Resources" / "app.asar"
+    if create_app:
+        archive.parent.mkdir(parents=True)
+        archive.write_bytes(b"original")
+        (archive.parent.parent / "Info.plist").write_bytes(b"not a plist")
+
+    with pytest.raises(ConfigError, match="Installed application was not found|Could not read"):
+        macos_app_info(DesktopPatchTarget("darwin", archive))
+
+
+def test_delete_desktop_backup_removes_sidecars_and_managed_snapshots(tmp_path: Path):
+    app = target(tmp_path)
+    sidecar = app.archive_path.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    snapshots = tmp_path / "backups"
+    managed = snapshots / "windows-20260728-010101"
+    (managed / "app.asar").parent.mkdir(parents=True)
+    (managed / "app.asar").write_bytes(b"original")
+    events: list[tuple[int, str]] = []
+
+    delete_desktop_backup(app, sidecar, snapshots, lambda *event: events.append(event))
+    delete_desktop_backup(app, managed, snapshots)
+
+    assert not sidecar.exists()
+    assert not managed.exists()
+    assert events[-1] == (MILESTONES["completion"], "completion: selected backup deleted permanently")
+
+
+def test_delete_desktop_backup_allows_invalid_managed_snapshot_but_not_outside_root(
+    tmp_path: Path,
+):
+    app = target(tmp_path)
+    snapshots = tmp_path / "backups"
+    corrupt = snapshots / "windows-20260728-010101"
+    corrupt.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    backups = desktop_backups(app, snapshots)
+    assert backups[0].path == corrupt
+    assert not backups[0].valid
+    delete_desktop_backup(app, corrupt, snapshots)
+    assert not corrupt.exists()
+
+    with pytest.raises(ConfigError, match="outside the managed backup root"):
+        delete_desktop_backup(app, outside, snapshots)
 
 
 @pytest.mark.parametrize("layout", (("resources",), ("app", "resources")))

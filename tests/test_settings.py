@@ -5,15 +5,32 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from textual.app import App
-from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TabbedContent, TabPane, Tabs
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Label,
+    ListItem,
+    ListView,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+    Tabs,
+)
 
-from codexier.desktop_patch import DesktopBackup, DesktopPatchTarget
+from codexier.desktop_patch import (
+    DesktopBackup,
+    DesktopPatchStatus,
+    DesktopPatchTarget,
+    MacOSAppInfo,
+)
 from codexier.errors import ConfigError
 from codexier.models import ModelDefinition, Provider
 from codexier.settings import DEFAULT_SETTINGS, MAX_CONTEXT_WINDOW, load_settings, save_settings
 from codexier.setup_tui import (
     BackupManagerScreen,
     ContextProfilesScreen,
+    DeleteConfirmScreen,
     ProviderManagerApp,
     RestoreConfirmScreen,
     SettingsScreen,
@@ -230,6 +247,24 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
     )
     monkeypatch.setattr("codexier.desktop_patch.application_targets", lambda: (target,))
     monkeypatch.setattr(
+        "codexier.desktop_patch.default_target", lambda _platform=None: target
+    )
+    monkeypatch.setattr(
+        "codexier.desktop_patch.macos_app_info",
+        lambda _target: MacOSAppInfo(
+            target.archive_path.parents[2],
+            "ChatGPT",
+            "com.openai.chat",
+            "1.2.3",
+            "456",
+            target.archive_path,
+            len(b"patched"),
+            datetime.now(timezone.utc),
+            DesktopPatchStatus(target, True, True, "Codexier desktop patch is installed."),
+            True,
+        ),
+    )
+    monkeypatch.setattr(
         "codexier.desktop_patch.desktop_backups",
         lambda _target, _root: (backup,),
     )
@@ -247,18 +282,34 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
             tabs = desktop.query_one(TabbedContent).query_one(Tabs)
             assert app.focused is tabs
             assert desktop.query_one(TabbedContent).active == "official-tab"
-            assert isinstance(desktop.query_one("#macos-custom-patch", Button), Button)
+            assert "Name        ChatGPT" in str(
+                desktop.query_one("#macos-app-info", Static).render()
+            )
+            patch = desktop.query_one("#macos-patch-custom-providers-models", Checkbox)
+            apply = desktop.query_one("#macos-apply-patches", Button)
+            assert patch.value
+            assert not apply.disabled
             assert str(desktop.query_one("#official-tab", TabPane)._title) == "Official App"
             assert str(desktop.query_one("#custom-patches-tab", TabPane)._title) == "Custom Patches"
             assert not desktop.query("#portable-providers")
             await pilot.press("right")
             assert desktop.query_one(TabbedContent).active == "custom-patches-tab"
             await pilot.press("down")
-            assert app.focused is desktop.query_one("#macos-custom-patch", Button)
+            assert app.focused is patch
+            await pilot.press("space")
+            assert not patch.value
+            assert apply.disabled
+            await pilot.press("space")
+            assert patch.value
+            assert not apply.disabled
+            await pilot.press("down")
+            assert app.focused is apply
             await pilot.press("down")
             assert app.focused is desktop.query_one("#backups", Button)
             await pilot.press("up")
-            assert app.focused is desktop.query_one("#macos-custom-patch", Button)
+            assert app.focused is apply
+            await pilot.press("up")
+            assert app.focused is patch
             await pilot.press("up")
             assert app.focused is tabs
             app.push_screen(backups)
@@ -281,7 +332,9 @@ def test_application_type_shows_macos_tabs_and_backup_manager_returns_to_parent(
 def test_macos_custom_patch_uses_existing_patch_flow(tmp_path: Path, monkeypatch):
     target = DesktopPatchTarget("darwin", tmp_path / "ChatGPT.app" / "Contents" / "Resources" / "app.asar")
     applied = []
-    monkeypatch.setattr("codexier.desktop_patch.default_target", lambda: target)
+    monkeypatch.setattr(
+        "codexier.desktop_patch.default_target", lambda _platform=None: target
+    )
 
     def apply_patch(selected_target, backup_root, progress):
         applied.append((selected_target, backup_root))
@@ -295,10 +348,112 @@ def test_macos_custom_patch_uses_existing_patch_flow(tmp_path: Path, monkeypatch
         async with app.run_test() as pilot:
             app.push_screen(desktop)
             await pilot.pause()
-            await desktop._run_action("macos-custom-patch")
+            await desktop._run_action("macos-apply-patches")
             assert applied == [(target, Path.home() / ".codex" / "codexier-desktop-backups")]
             assert isinstance(app.screen, WindowsProgressScreen)
             assert desktop.progress_screen.finished
+
+    asyncio.run(scenario())
+
+
+def test_backup_delete_confirmation_cancels_then_refreshes_inventory(
+    tmp_path: Path, monkeypatch
+):
+    archive = tmp_path / "resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    sidecar = archive.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    target = DesktopPatchTarget("windows", archive)
+    backup = DesktopBackup(
+        target,
+        sidecar,
+        sidecar,
+        "Immutable original",
+        len(b"original"),
+        datetime.now(timezone.utc),
+        True,
+        "Original archive",
+    )
+    monkeypatch.setattr("codexier.desktop_patch.application_targets", lambda: (target,))
+    monkeypatch.setattr(
+        "codexier.desktop_patch.desktop_backups",
+        lambda _target, _root: (backup,) if sidecar.exists() else (),
+    )
+
+    def delete_backup(_target, path, _root, progress):
+        progress(80, "verification: deleting selected backup")
+        path.unlink()
+
+    monkeypatch.setattr("codexier.desktop_patch.delete_desktop_backup", delete_backup)
+
+    async def scenario() -> None:
+        app = App()
+        manager = BackupManagerScreen()
+        async with app.run_test() as pilot:
+            app.push_screen(manager)
+            await pilot.pause()
+            manager.action_delete()
+            await pilot.pause()
+            assert isinstance(app.screen, DeleteConfirmScreen)
+            assert app.focused is app.screen.query_one("#cancel", Button)
+            app.screen.dismiss(False)
+            await pilot.pause()
+            assert app.screen is manager
+            assert sidecar.exists()
+
+            manager.action_delete()
+            await pilot.pause()
+            assert isinstance(app.screen, DeleteConfirmScreen)
+            app.screen.dismiss(True)
+            await pilot.pause()
+            await pilot.pause()
+            assert not sidecar.exists()
+            assert not manager.backups
+            assert manager.progress_screen is not None
+            assert manager.progress_screen.finished
+
+    asyncio.run(scenario())
+
+
+def test_backup_delete_failure_is_shown_in_progress_log(tmp_path: Path, monkeypatch):
+    archive = tmp_path / "resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    sidecar = archive.with_name("app.asar.bak")
+    sidecar.write_bytes(b"original")
+    target = DesktopPatchTarget("windows", archive)
+    backup = DesktopBackup(
+        target,
+        sidecar,
+        sidecar,
+        "Immutable original",
+        len(b"original"),
+        datetime.now(timezone.utc),
+        True,
+        "Original archive",
+    )
+    monkeypatch.setattr("codexier.desktop_patch.application_targets", lambda: (target,))
+    monkeypatch.setattr(
+        "codexier.desktop_patch.desktop_backups",
+        lambda _target, _root: (backup,),
+    )
+    monkeypatch.setattr(
+        "codexier.desktop_patch.delete_desktop_backup",
+        lambda *_args: (_ for _ in ()).throw(ConfigError("delete failed")),
+    )
+
+    async def scenario() -> None:
+        app = App()
+        manager = BackupManagerScreen()
+        async with app.run_test() as pilot:
+            app.push_screen(manager)
+            await pilot.pause()
+            await manager._delete_selected()
+            assert isinstance(app.screen, WindowsProgressScreen)
+            assert "delete failed" in str(
+                manager.progress_screen.query_one("#progress-status", Static).render()
+            )
+            assert manager.progress_screen.query_one("#progress-log", RichLog).lines
+            assert manager.progress_screen.finished
 
     asyncio.run(scenario())
 

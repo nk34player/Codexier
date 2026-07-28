@@ -15,6 +15,7 @@ from textual.screen import ModalScreen, Screen
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
+    Checkbox,
     Footer,
     Header,
     Input,
@@ -55,6 +56,14 @@ _HIDDEN_PROVIDER_MANAGER_BINDINGS = [
     Binding(key, "ignore_manager_shortcut", show=False)
     for key in ("a", "e", "d", "q", "s", "space")
 ]
+
+_MACOS_PATCHES = (
+    (
+        "custom-providers-models",
+        "Custom Providers + Custom Models",
+        "Add Codexier's provider and model selection patch to the installed app.",
+    ),
+)
 
 
 class _ProviderManagerShortcutIsolation:
@@ -812,6 +821,37 @@ class RestoreConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "restore")
 
 
+class DeleteConfirmScreen(ModalScreen[bool]):
+    CSS = """
+    DeleteConfirmScreen { align: center middle; background: rgba(0, 0, 0, 0.65); }
+    #delete-confirm { width: 76%; height: auto; padding: 1 2; border: round #ef4444; background: #131d38; }
+    #delete-actions { height: auto; margin-top: 1; }
+    Button { width: 1fr; margin-right: 1; background: #b91c1c; color: white; }
+    #cancel { background: #374151; }
+    """
+
+    def __init__(self, detail: str):
+        super().__init__()
+        self.detail = detail
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="delete-confirm"):
+            yield Static("DELETE APPLICATION BACKUP")
+            yield Static(
+                f"{self.detail}\n\nThis permanently deletes the selected backup. "
+                "It cannot be restored from Codexier."
+            )
+            with Horizontal(id="delete-actions"):
+                yield Button("Delete permanently", id="delete", variant="error")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#cancel", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "delete")
+
+
 class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
@@ -823,11 +863,13 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
     #backup-info { height: auto; min-height: 5; margin-top: 1; color: #c7d2fe; }
     #backup-actions { height: auto; min-height: 4; }
     Button { width: 1fr; margin-right: 1; background: #2563eb; color: white; }
+    #delete { background: #b91c1c; }
     #back { background: #374151; }
     .error { color: #ff6b8a; }
     """
     BINDINGS = [
         Binding("enter", "select", "Restore", priority=True),
+        Binding("delete", "delete", "Delete", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
@@ -848,6 +890,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
             yield Static("Loading backups …", id="backup-info")
             with Horizontal(id="backup-actions"):
                 yield Button("Restore selected backup", id="restore", variant="primary")
+                yield Button("Delete selected backup", id="delete", variant="error")
                 yield Button("Back", id="back")
         yield Footer()
 
@@ -931,6 +974,22 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
         if confirmed:
             self.run_worker(self._restore_selected(), exclusive=True)
 
+    def action_delete(self) -> None:
+        backup = self._selected_backup()
+        info = self.query_one("#backup-info", Static)
+        if backup is None:
+            info.update("Select a backup before deleting it.")
+            info.add_class("error")
+            return
+        self.app.push_screen(
+            DeleteConfirmScreen(f"Delete {backup.kind.lower()}:\n{backup.path}"),
+            self._delete_confirmed,
+        )
+
+    def _delete_confirmed(self, confirmed: bool | None) -> None:
+        if confirmed:
+            self.run_worker(self._delete_selected(), exclusive=True)
+
     def _progress(self, percent: int, detail: str) -> None:
         self.app.call_from_thread(self._show_progress, percent, detail)
 
@@ -959,12 +1018,36 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
         self.progress_screen.finish("Backup restored. Review the detailed log, then close.")
         await self._load_backups()
 
+    async def _delete_selected(self) -> None:
+        backup = self._selected_backup()
+        if backup is None:
+            return
+        self.progress_screen = WindowsProgressScreen("Deleting application backup")
+        await self.app.push_screen(self.progress_screen)
+        try:
+            from .desktop_patch import delete_desktop_backup
+
+            await asyncio.to_thread(
+                delete_desktop_backup,
+                backup.target,
+                backup.path,
+                Path.home() / ".codex" / "codexier-desktop-backups",
+                self._progress,
+            )
+        except (ConfigError, OSError, PatchError) as exc:
+            self.progress_screen.finish(str(exc), error=True)
+            return
+        self.progress_screen.finish("Backup deleted permanently. Review the detailed log, then close.")
+        await self._load_backups()
+
     def action_cancel(self) -> None:
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "restore":
             self.action_select()
+        elif event.button.id == "delete":
+            self.action_delete()
         elif event.button.id == "back":
             self.action_cancel()
 
@@ -980,6 +1063,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     .official-info { width: 2fr; padding: 1 2; border: round #263b68; background: #0f1730; }
     .official-selection { width: 1fr; margin-left: 1; padding: 1 2; border: round #3b82f6; background: #101b36; }
     .macos-card { height: auto; max-width: 96; padding: 1 2; border: round #263b68; background: #0f1730; }
+    .patch-description { color: #c7d2fe; padding: 0 2 1 2; }
     .section-title { color: #8be9fd; text-style: bold; }
     .provider-list { height: 1fr; min-height: 0; border: round #263b68; background: #0f1730; }
     .provider-list > ListItem { min-height: 3; padding: 1 2; }
@@ -1053,23 +1137,33 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                             )
                 else:
                     with TabPane("Official App", id="official-tab"):
-                        with Vertical(classes="macos-card"):
-                            yield Static("OFFICIAL APP", classes="section-title")
-                            yield Static(
-                                "No editions or Codexier modifications are applied from this tab.\n"
-                                "To restore an earlier archive, use View application backups."
-                            )
+                        with Horizontal(classes="official-layout"):
+                            with Vertical(classes="official-info"):
+                                yield Static("INSTALLED APPLICATION", classes="section-title")
+                                yield Static(
+                                    "Loading installed application information …",
+                                    id="macos-app-info",
+                                )
+                            with Vertical(classes="official-selection"):
+                                yield Static("OFFICIAL APP", classes="section-title")
+                                yield Static(
+                                    "No editions or Codexier modifications are applied from this tab.\n"
+                                    "To restore an earlier archive, use View application backups."
+                                )
                     with TabPane("Custom Patches", id="custom-patches-tab"):
                         with Vertical(classes="macos-card"):
-                            yield Static("CUSTOM PROVIDERS + CUSTOM MODELS", classes="section-title")
-                            yield Static(
-                                "Apply Codexier's custom provider and model patch to the installed "
-                                "macOS app. The original app.asar is preserved as app.asar.bak."
-                            )
+                            yield Static("SELECT PATCHES TO APPLY", classes="section-title")
+                            for patch_id, title, description in _MACOS_PATCHES:
+                                yield Checkbox(
+                                    title,
+                                    value=True,
+                                    id=f"macos-patch-{patch_id}",
+                                )
+                                yield Static(description, classes="patch-description")
                             with Horizontal(classes="actions"):
                                 yield Button(
-                                    "Apply Custom Providers + Custom Models",
-                                    id="macos-custom-patch",
+                                    "Apply selected patches",
+                                    id="macos-apply-patches",
                                     variant="primary",
                                 )
             yield Static(
@@ -1088,6 +1182,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     async def on_mount(self) -> None:
         if not self.is_windows:
             self.call_after_refresh(self._focus_windows_tabs)
+            self.run_worker(self._load_macos_app_info(), exclusive=True)
             return
         if not self.providers:
             from .provider_store import ProviderStore
@@ -1150,6 +1245,36 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             status.update(str(exc))
             status.add_class("error")
 
+    async def _load_macos_app_info(self) -> None:
+        info = self.query_one("#macos-app-info", Static)
+        status = self.query_one("#windows-status", Static)
+        try:
+            from .desktop_patch import default_target, macos_app_info
+
+            app = await asyncio.to_thread(macos_app_info, default_target("darwin"))
+        except (ConfigError, OSError) as exc:
+            info.update(str(exc))
+            info.add_class("error")
+            status.update("Installed application information is unavailable.")
+            status.add_class("error")
+            return
+        state = "PATCHED" if app.patch_status.patched else "UNMODIFIED"
+        backup = "Available" if app.sidecar_exists else "Not created yet"
+        info.remove_class("error")
+        info.update(
+            f"Name        {app.app_name}\n"
+            f"Version     {app.version} ({app.build})\n"
+            f"Bundle ID   {app.bundle_identifier}\n"
+            f"App path    {app.app_path}\n"
+            f"Archive     {app.archive_path}\n"
+            f"Archive     {app.archive_size_bytes:,} bytes · "
+            f"{app.archive_modified_at:%Y-%m-%d %H:%M UTC}\n"
+            f"Patch       {state} · {app.patch_status.message}\n"
+            f"Backup      app.asar.bak · {backup}"
+        )
+        status.remove_class("error")
+        status.update("Installed application information loaded.")
+
     def _official_selected_provider(self) -> Provider | None:
         selected_id = self.settings["windows"].get("official_provider_id")
         return next(
@@ -1188,13 +1313,42 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             )
         return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
 
-    def _active_macos_actions(self) -> tuple[Button, ...]:
+    def _active_macos_actions(self) -> tuple[Button | Checkbox, ...]:
         ids = (
             ("backups", "back")
             if self.query_one(TabbedContent).active == "official-tab"
-            else ("macos-custom-patch", "backups", "back")
+            else (
+                *(
+                    f"macos-patch-{patch_id}"
+                    for patch_id, _, _ in _MACOS_PATCHES
+                ),
+                "macos-apply-patches",
+                "backups",
+                "back",
+            )
         )
-        return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
+        return tuple(
+            self.query_one(
+                f"#{widget_id}",
+                Checkbox if widget_id.startswith("macos-patch-") else Button,
+            )
+            for widget_id in ids
+        )
+
+    def _selected_macos_patches(self) -> tuple[str, ...]:
+        return tuple(
+            patch_id
+            for patch_id, _, _ in _MACOS_PATCHES
+            if self.query_one(f"#macos-patch-{patch_id}", Checkbox).value
+        )
+
+    def _refresh_macos_patch_button(self) -> None:
+        self.query_one("#macos-apply-patches", Button).disabled = not self._selected_macos_patches()
+
+    @on(Checkbox.Changed)
+    def _on_macos_patch_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id and event.checkbox.id.startswith("macos-patch-"):
+            self._refresh_macos_patch_button()
 
     def _shortcut_label(self) -> str:
         state = "ON" if self.settings["windows"]["create_desktop_shortcut"] else "OFF"
@@ -1230,7 +1384,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                 self._focus_active_content()
                 event.stop()
                 return
-            if event.key not in {"up", "down", "left", "right"} or not isinstance(self.focused, Button):
+            if event.key not in {"up", "down", "left", "right"} or not isinstance(
+                self.focused, (Button, Checkbox)
+            ):
                 return
             buttons = self._active_macos_actions()
             try:
@@ -1309,7 +1465,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     def _action_title(action: str) -> str:
         return {
             "official-sync": "Syncing and launching Official Codex",
-            "macos-custom-patch": "Applying Custom Providers + Custom Models",
+            "macos-apply-patches": "Applying selected custom patches",
             "portable-create": "Creating Portable Codex",
             "portable-refresh": "Refreshing Portable Codex status",
             "portable-repair": "Repairing Portable Codex patch",
@@ -1322,10 +1478,14 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             self._official_selected_provider()
             if action == "official-sync"
             else None
-            if action in {"portable-refresh", "macos-custom-patch"}
+            if action in {"portable-refresh", "macos-apply-patches"}
             else self._selected_provider("portable-providers")
         )
-        if action not in {"portable-refresh", "macos-custom-patch"} and selected is None:
+        if action == "macos-apply-patches" and not self._selected_macos_patches():
+            status.update("Select at least one custom patch first.")
+            status.add_class("error")
+            return
+        if action not in {"portable-refresh", "macos-apply-patches"} and selected is None:
             status.update(
                 "Apply a provider from the main screen first."
                 if action == "official-sync"
@@ -1336,7 +1496,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         self.progress_screen = WindowsProgressScreen(self._action_title(action))
         await self.app.push_screen(self.progress_screen)
         try:
-            if action == "macos-custom-patch":
+            if action == "macos-apply-patches":
                 from .desktop_patch import apply_desktop_patch, default_target
 
                 await asyncio.to_thread(

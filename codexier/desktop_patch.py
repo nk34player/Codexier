@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import ntpath
 import platform as platform_module
+import plistlib
 import shutil
 import subprocess
 import tempfile
@@ -41,6 +42,20 @@ class DesktopPatchStatus:
     supported: bool
     message: str
     skipped: bool = False
+
+
+@dataclass(frozen=True)
+class MacOSAppInfo:
+    app_path: Path
+    app_name: str
+    bundle_identifier: str
+    version: str
+    build: str
+    archive_path: Path
+    archive_size_bytes: int
+    archive_modified_at: datetime
+    patch_status: DesktopPatchStatus
+    sidecar_exists: bool
 
 
 @dataclass(frozen=True)
@@ -249,6 +264,42 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
     )
 
 
+def macos_app_info(target: DesktopPatchTarget) -> MacOSAppInfo:
+    """Return display information for one installed macOS Electron app."""
+    if target.platform != "darwin":
+        raise ConfigError("macOS app information is available only for macOS targets.")
+    archive = target.archive_path
+    contents = archive.parent.parent
+    app = contents.parent
+    info_path = contents / "Info.plist"
+    if not app.is_dir():
+        raise ConfigError(f"Installed application was not found: {app}")
+    try:
+        with info_path.open("rb") as handle:
+            metadata = plistlib.load(handle)
+        stat = archive.stat()
+    except (OSError, plistlib.InvalidFileException) as exc:
+        raise ConfigError(f"Could not read installed application information: {exc}") from exc
+    if not isinstance(metadata, dict):
+        raise ConfigError(f"Could not read installed application information: {info_path}")
+    return MacOSAppInfo(
+        app_path=app,
+        app_name=str(
+            metadata.get("CFBundleDisplayName")
+            or metadata.get("CFBundleName")
+            or app.stem
+        ),
+        bundle_identifier=str(metadata.get("CFBundleIdentifier") or "Unknown"),
+        version=str(metadata.get("CFBundleShortVersionString") or "Unknown"),
+        build=str(metadata.get("CFBundleVersion") or "Unknown"),
+        archive_path=archive,
+        archive_size_bytes=stat.st_size,
+        archive_modified_at=datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+        patch_status=patch_status(target),
+        sidecar_exists=archive.with_name(f"{archive.name}.bak").is_file(),
+    )
+
+
 def backup_desktop_patch(target: DesktopPatchTarget, backup_root: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     backup = backup_root / f"{target.platform}-{stamp}"
@@ -291,25 +342,28 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
         candidates.append((sidecar, sidecar, "Immutable original"))
     if backup_root.is_dir():
         for backup in backup_root.iterdir():
-            if not backup.is_dir():
+            if (
+                backup.is_symlink()
+                or not backup.is_dir()
+                or not backup.name.startswith(f"{target.platform}-")
+            ):
                 continue
-            archive = (
-                backup / "Contents" / "Resources" / "app.asar"
-                if target.platform == "darwin"
-                else backup / "app.asar"
-            )
-            if archive.is_file():
-                candidates.append((backup, archive, "Managed snapshot"))
+            archive = _managed_snapshot_archive(target, backup)
+            candidates.append((backup, archive, "Managed snapshot"))
     entries: list[DesktopBackup] = []
     for path, archive, kind in candidates:
         try:
-            patched = PATCH_MARKER_PREFIX in archive.read_bytes()
             stat = archive.stat()
+            patched = PATCH_MARKER_PREFIX in archive.read_bytes()
         except OSError as exc:
+            try:
+                modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+            except OSError:
+                modified_at = datetime.fromtimestamp(0, timezone.utc)
             entries.append(
                 DesktopBackup(
-                    target, path, archive, kind, 0, datetime.fromtimestamp(0, timezone.utc),
-                    False, f"Cannot read backup: {exc}",
+                    target, path, archive, kind, 0, modified_at, False,
+                    f"Cannot read backup: {exc}",
                 )
             )
             continue
@@ -326,6 +380,46 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
             )
         )
     return tuple(sorted(entries, key=lambda item: item.modified_at, reverse=True))
+
+
+def _managed_snapshot_archive(target: DesktopPatchTarget, backup: Path) -> Path:
+    """Find current full-app archive layout or legacy archive-only snapshot."""
+    if target.platform == "darwin":
+        app_archive = backup / "Contents" / "Resources" / "app.asar"
+        if app_archive.is_file():
+            return app_archive
+    return backup / "app.asar"
+
+
+def delete_desktop_backup(
+    target: DesktopPatchTarget,
+    backup: Path,
+    backup_root: Path,
+    progress: PatchProgress | None = None,
+) -> None:
+    """Permanently delete a verified sidecar or managed snapshot path."""
+    report(progress, "validation", f"validating selected backup {backup}")
+    sidecar = target.archive_path.with_name(f"{target.archive_path.name}.bak")
+    if backup.absolute() == sidecar.absolute():
+        if not backup.is_file():
+            raise ConfigError(f"Backup file is unavailable: {backup}")
+        report(progress, "atomic replacement", f"deleting immutable sidecar {backup}")
+        backup.unlink()
+    else:
+        root = backup_root.resolve()
+        if (
+            backup.is_symlink()
+            or not backup.is_dir()
+            or backup.parent.resolve() != root
+            or not backup.name.startswith(f"{target.platform}-")
+        ):
+            raise ConfigError(f"Refusing to delete backup outside the managed backup root: {backup}")
+        report(progress, "atomic replacement", f"deleting managed snapshot {backup}")
+        shutil.rmtree(backup)
+    report(progress, "verification", f"confirming backup was removed: {backup}")
+    if backup.exists():
+        raise ConfigError(f"Backup could not be deleted: {backup}")
+    report(progress, "completion", "selected backup deleted permanently")
 
 
 def apply_desktop_patch(
