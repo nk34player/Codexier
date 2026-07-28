@@ -92,8 +92,11 @@ def _gracefully_close_target_processes(
 
 
 def _make_backup(archive: Path, backup_root: Path) -> Path:
+    for previous in backup_root.glob("automatic-windows-*"):
+        if previous.is_dir() and not previous.is_symlink():
+            shutil.rmtree(previous)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    backup = backup_root / f"windows-{timestamp}"
+    backup = backup_root / f"automatic-windows-{timestamp}"
     suffix = 1
     while backup.exists():
         backup = backup_root / f"windows-{timestamp}-{suffix}"

@@ -174,10 +174,10 @@ CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
 +  return n === `auto` ? (t.modelProviders[e?.model] ?? t.defaultProvider) : n;
 +}
 +async function codexPatchAppServerParams(e, t) {
-+  if (e === `thread/start` && t != null && typeof t === `object`)
-+    return t.modelProvider == null
-+      ? { ...t, modelProvider: await codexProviderForThreadStart(t) }
-+      : t;
++  if (e === `thread/start` && t != null && typeof t === `object` && t.modelProvider == null) {
++    let n = await codexProviderForThreadStart(t);
++    return n == null ? t : { ...t, modelProvider: n };
++  }
 +  return t;
  }
  var jf,
@@ -406,7 +406,7 @@ PICKER_DIFF = r"""@@ -10162,6 +10162,204 @@
 +  CodexProviderPatchReact,
    IO = e(() => {
      ((PO = w()),
-+      (CodexProviderPatchReact = t(m(), 1)),
++      (CodexProviderPatchReact = PO),
        T(),
        Q(),
        Pg(),
@@ -706,7 +706,7 @@ PICKER_DIFF_26721 = r"""@@ -520849,7 +520849,7 @@
 +  CodexProviderPatchReact,
    EMs = e(() => {
      ((TMs = c()),
-+      (CodexProviderPatchReact = r(o(), 1)),
++      (CodexProviderPatchReact = TMs),
        pd(),
        ad(),
        gls(),
@@ -937,8 +937,7 @@ async function codexPatchAppServerParams(e, t) {
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
   if (i == null) return t;
-  if (!i.models.some((e) => e.id === t.model))
-    throw Error(`The selected model is not configured for the selected provider`);
+  if (!i.models.some((e) => e.id === t.model)) return t;
   return { ...t, modelProvider: i.id };
 }"""
 
@@ -2027,7 +2026,7 @@ def _apply_codex_26721_4979_layout(source: str) -> str:
             "var pMs,TQ,CodexProviderPatchReact,",
         ).replace(
             "pMs=c(),pd()",
-            "pMs=c(),CodexProviderPatchReact=r(o(),1),pd()",
+            "pMs=c(),CodexProviderPatchReact=pMs,pd()",
         ),
         layout,
     )
@@ -2058,7 +2057,7 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
                 source,
                 "function dMs(e){",
                 CENTRAL_V7_JAVASCRIPT + "\n" + PICKER_V7_JAVASCRIPT.replace(
-                    "CodexProviderPatchReact", "lMs"
+                    "CodexProviderPatchReact", "TMs"
                 ) + "\nfunction dMs(e){",
                 CODEX_26721_5848_LAYOUT,
             )
@@ -2111,13 +2110,20 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
     return name
 
 
-def make_backup(app: Path, backup_dir: Path, version: str, build: str) -> Path:
+def make_backup(
+    app: Path, backup_dir: Path, version: str, build: str, *, automatic: bool = False
+) -> Path:
     backup_dir.mkdir(parents=True, exist_ok=True)
+    if automatic:
+        for previous in backup_dir.glob("automatic-ChatGPT-*.app"):
+            if previous.is_dir() and not previous.is_symlink():
+                shutil.rmtree(previous)
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_version = re.sub(r"[^A-Za-z0-9._-]+", "-", version)
     safe_build = re.sub(r"[^A-Za-z0-9._-]+", "-", build)
+    prefix = "automatic-" if automatic else ""
     backup = backup_dir / (
-        f"ChatGPT-{safe_version}-build-{safe_build}-{timestamp}.app"
+        f"{prefix}ChatGPT-{safe_version}-build-{safe_build}-{timestamp}.app"
     )
     suffix = 1
     while backup.exists():
@@ -2393,7 +2399,7 @@ def patch_app(
         detail=app,
     )
     report(progress, "backup", "creating a verified backup of the desktop app")
-    backup = make_backup(app, backup_dir, version, build)
+    backup = make_backup(app, backup_dir, version, build, automatic=True)
     terminal_status("OK", "App backup created.", "32", detail=backup)
     with restore_app_after_failure(
         app, backup, progress

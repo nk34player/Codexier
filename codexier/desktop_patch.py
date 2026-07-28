@@ -14,6 +14,8 @@ import plistlib
 import shutil
 import subprocess
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -383,9 +385,13 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
                 or not backup.is_dir()
                 or not (
                     backup.name.startswith(f"{target.platform}-")
+                    or backup.name.startswith(f"automatic-{target.platform}-")
                     or (
                         target.platform == "darwin"
-                        and backup.name.startswith("ChatGPT-")
+                        and (
+                            backup.name.startswith("ChatGPT-")
+                            or backup.name.startswith("automatic-ChatGPT-")
+                        )
                         and backup.name.endswith(".app")
                     )
                 )
@@ -410,6 +416,9 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
                 )
             )
             continue
+        created_at = _backup_created_at(path)
+        if path.name.startswith("automatic-"):
+            kind = "Automatic snapshot"
         entries.append(
             DesktopBackup(
                 target,
@@ -417,12 +426,20 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
                 archive,
                 kind,
                 stat.st_size,
-                datetime.fromtimestamp(stat.st_mtime, timezone.utc),
+                created_at,
                 not patched,
                 "Original archive" if not patched else "Patched archive; restore is blocked",
             )
         )
     return tuple(sorted(entries, key=lambda item: item.modified_at, reverse=True))
+
+
+def _backup_created_at(path: Path) -> datetime:
+    """Use creation time; archive mtime is inherited from the source app."""
+    stat = path.stat()
+    return datetime.fromtimestamp(
+        getattr(stat, "st_birthtime", stat.st_mtime), timezone.utc
+    )
 
 
 def _managed_snapshot_archive(target: DesktopPatchTarget, backup: Path) -> Path:
@@ -527,12 +544,62 @@ def apply_desktop_patch(
                 gracefully_close_target_app_processes(app, force=True)
             else:
                 gracefully_close_target_app_processes(app)
-            patch_app(app, config, backup_root, False, emit)
-            if was_running:
-                report(emit, "restart", "reopening the desktop app")
-                subprocess.Popen(["open", "-a", "ChatGPT"])
+            if progress is None:
+                patch_app(app, config, backup_root, False, emit)
             else:
-                report(emit, "restart", "desktop app was already closed; no restart was needed")
+                # TUI owns the terminal; legacy installer panels must not leak
+                # over it while the worker is running.
+                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                    patch_app(app, config, backup_root, False, emit)
+            log_dir = config.parent / "codexier-logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path = log_dir / (
+                f"chatgpt-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+            )
+            executable = app / "Contents" / "MacOS" / "ChatGPT"
+            codex = app / "Contents" / "Resources" / "codex"
+            if executable.is_file():
+                log_handle = log_path.open("ab")
+                try:
+                    launch_env = os.environ.copy()
+                    launch_env.update(
+                        {
+                            "ELECTRON_ENABLE_LOGGING": "1",
+                            "RUST_BACKTRACE": "1",
+                            "CODEXIER_CODEX_LOG_PATH": str(log_path),
+                        }
+                    )
+                    subprocess.Popen(
+                        [str(executable)],
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        env=launch_env,
+                        start_new_session=True,
+                    )
+                except Exception:
+                    log_handle.close()
+                    raise
+                log_handle.close()
+                report(emit, "restart", f"started ChatGPT; runtime log: {log_path}")
+            else:
+                report(emit, "restart", f"ChatGPT executable not found; runtime log: {log_path}")
+            if codex.is_file():
+                with log_path.open("ab") as log_handle:
+                    log_handle.write(
+                        f"\n=== Codex executable diagnostic: {codex} ===\n".encode()
+                    )
+                    diagnostic = subprocess.run(
+                        [str(codex), "--version"],
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        env={**os.environ, "RUST_BACKTRACE": "1"},
+                        timeout=15,
+                        check=False,
+                    )
+                    log_handle.write(
+                        f"=== Codex diagnostic exit code: {diagnostic.returncode} ===\n".encode()
+                    )
+                report(emit, "restart", f"logged Codex diagnostic: {log_path}")
         except PatchSkipped as exc:
             skipped = DesktopPatchStatus(target, False, True, str(exc), True)
             report(emit, "completion", skipped.message)

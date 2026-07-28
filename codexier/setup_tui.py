@@ -801,8 +801,12 @@ class WindowsProgressScreen(ModalScreen[None]):
 
     def finish(self, message: str, *, error: bool = False) -> None:
         self.finished = True
+        self.query_one("#progress-bar", ProgressBar).update(progress=100)
         status = self.query_one("#progress-status", Static)
-        status.update(message)
+        status.update(f"100%  {message}")
+        self.query_one("#progress-log", RichLog).write(
+            f"[{'red' if error else 'green'}]100%[/] {message}", scroll_end=True
+        )
         if error:
             status.add_class("error")
             self.query_one("#progress-log", RichLog).write(
