@@ -1099,6 +1099,8 @@ CODEX_26721_4979_REACT_ANCHOR = (
     "qX(),dD(),bz(),Hos(),Mcs(),ycs(),zos(),Zos(),Kos(),kcs(),TQ=J()})),"
 )
 
+CODEX_26721_5848_LAYOUT = "Codex 26.721.41059 macOS build 5848 provider picker"
+
 # These are deliberately generated rather than hand-written unified-diff
 # lines.  It prevents an accidental missing `+` from creating an invalid
 # embedded patch while retaining exact source-hunk matching.
@@ -2039,6 +2041,45 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
 
     if central == picker:
         try:
+            source = originals[central]
+            source = _replace_once(
+                source,
+                "async sendRequest(e,t,n){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);return e===`config/read`?this.sendConfigReadRequest(t,n):this.enqueueRequest(e,t,n)}",
+                "async sendRequest(e,t,n){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);return e===`config/read`?this.sendConfigReadRequest(t,n):this.enqueueRequest(e,await codexPatchAppServerParams(e,t),n)}",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "async prewarmThreadStart(e,t){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);let n=",
+                "async prewarmThreadStart(e,t){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);e=await codexPatchAppServerParams(`thread/start`,e);let n=",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "function dMs(e){",
+                CENTRAL_V7_JAVASCRIPT + "\n" + PICKER_V7_JAVASCRIPT.replace(
+                    "CodexProviderPatchReact", "lMs"
+                ) + "\nfunction dMs(e){",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
+                "p=codexUseProviderModels(p);let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "children:[m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
+                "children:[(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
+                CODEX_26721_5848_LAYOUT,
+            )
+            compatible.append((CODEX_26721_5848_LAYOUT, {central: source}))
+        except PatchError:
+            pass
+
+    if central == picker:
+        try:
             compatible.append(
                 (CODEX_26721_4979_LAYOUT, {central: _apply_codex_26721_4979_layout(originals[central])})
             )
@@ -2382,12 +2423,12 @@ def patch_app(
         report(progress, "bundle matching", "matching the supported application bundle layout")
         central = unique_candidate(
             assets,
-            ("async prewarmThreadStart(", "async sendConfigReadRequest("),
+            ("async prewarmThreadStart(",),
             "App Server client",
         )
         picker = unique_candidate(
             assets,
-            ("composer.intelligenceDropdown.tooltip", "modelOptionsDisabled"),
+            ("modelOptionsDisabled:m",),
             "model picker",
         )
 
