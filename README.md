@@ -60,8 +60,9 @@ Open **Settings → Windows desktop apps** and choose one of two modes:
 payload. **Refresh portable status** only re-scans an existing portable copy and
 its source version; it never copies, patches, or replaces the app. Codexier
 never changes `WindowsApps`, removes package signatures, or registers a modified
-AppX/MSIX. It does not require Codex App Manager, a mirror, or another external
-project. Use **Repair patch** after a patch problem.
+AppX/MSIX. **Repair patch** works on the existing portable `app.asar` in place
+and keeps a backup; it never creates a second portable copy. It does not require
+Codex App Manager, a mirror, or another external project.
 
 Both modes use the same lowercase `codexier` profile, displayed as `Codexier`,
 and the standard `%USERPROFILE%\.codex` home. Portable Codex keeps its Electron
@@ -70,8 +71,9 @@ app's running instance or session. If `CODEX_HOME` points elsewhere, Windows
 dual-app launch is blocked until it is unset or points to the standard `.codex`
 directory.
 
-Before switching or updating, Codexier requests a graceful close of all Official
-and Portable Codex windows. It never force-kills them. A failed close aborts
+Before switching or updating, Codexier requests a normal close of all Official
+and Portable Codex windows, then terminates any process left in the notification
+area. A failed close aborts
 before configuration or application files change. Portable install and patch
 operations show numbered progress and detailed logs; failures after replacement
 restore and verify the previous managed portable payload. The Store source and

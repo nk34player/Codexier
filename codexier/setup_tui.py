@@ -105,6 +105,16 @@ class ProviderListView(ListView):
             self.post_message(self.Confirmed(self, self.highlighted_child))
 
 
+class SettingsListView(ListView):
+    """Move from the final setting to the action buttons with Down."""
+
+    def action_cursor_down(self) -> None:
+        if self.index is not None and self.index < len(self.children) - 1:
+            super().action_cursor_down()
+        else:
+            self.screen._focus_first_settings_action()  # type: ignore[attr-defined]
+
+
 class SetupApp(App[bool]):
     TITLE = "Codexier"
     CSS = """
@@ -213,11 +223,11 @@ class ProviderManagerApp(App[Provider | None]):
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
     Header, Footer { background: #111a33; color: #8be9fd; }
-    #shell { width: 98%; height: 1fr; margin: 1 1; padding: 1 2; }
+    #shell { width: 98%; height: 1fr; min-height: 0; margin: 0 1; padding: 1 2; }
     #brand { height: auto; min-height: 5; padding: 1 2; background: #131d38; border: round #3b82f6; color: #8be9fd; }
-    #providers { width: 1fr; height: 1fr; min-height: 12; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #providers { width: 1fr; height: 1fr; min-height: 0; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     #providers > ListItem { min-height: 5; padding: 1 3; }
-    #actions { height: 4; margin-top: 1; }
+    #actions { height: auto; min-height: 4; margin-top: 1; overflow-x: auto; scrollbar-size: 1 1; }
     ListItem { padding: 1 2; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
     Button { margin-right: 1; background: #2563eb; color: white; }
@@ -506,18 +516,17 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
-    #shell { width: 96%; height: 1fr; margin: 1 2; padding: 2 4; border: round #3b82f6; background: #131d38; }
-    #settings { height: 1fr; min-height: 10; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
+    #shell { width: 96%; height: 1fr; min-height: 0; margin: 0 1; padding: 1 2; border: round #3b82f6; background: #131d38; }
+    #settings { height: 1fr; min-height: 0; margin-top: 1; border: round #263b68; background: #0f1730; overflow-y: scroll; scrollbar-size: 1 1; }
     #settings > ListItem { min-height: 5; padding: 1 3; }
     ListItem.--highlight { background: #1d4ed8; color: white; }
-    #actions { height: 4; }
+    #actions { height: auto; min-height: 4; overflow-x: auto; scrollbar-size: 1 1; }
     Button { width: 1fr; background: #2563eb; color: white; }
     #back { background: #374151; }
     #status { height: 3; color: #8be9fd; }
     """
     BINDINGS = [
-        ("space", "toggle", "Toggle / edit setting"),
-        Binding("enter", "save", "Save settings", priority=True),
+        Binding("enter", "select", "Select / save", priority=True),
         Binding("escape", "cancel", "Back", priority=True),
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
@@ -557,10 +566,10 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             yield Static("CODEXIER SETTINGS")
             yield Static(
                 "Choose a setting to change its value. Each entry includes a short explanation.\n"
-                "↑↓ move · Space toggle or edit · Enter save · Esc back",
+                "↑↓ move · Enter select, toggle, or save · Esc back",
                 id="status",
             )
-            yield ListView(id="settings")
+            yield SettingsListView(id="settings")
             with Horizontal(id="actions"):
                 yield Button("Save settings  ›", id="save", variant="primary")
                 yield Button("Back to main menu", id="back")
@@ -637,6 +646,27 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
             self.settings[key] = not bool(self.settings.get(key, False))
         self._refresh_setting(key)
 
+    def _settings_actions(self) -> tuple[Button, Button]:
+        return (
+            self.query_one("#save", Button),
+            self.query_one("#back", Button),
+        )
+
+    def _focus_first_settings_action(self) -> None:
+        self._settings_actions()[0].focus()
+
+    def _focus_settings_list(self) -> None:
+        self.query_one("#settings", ListView).focus()
+
+    def action_select(self) -> None:
+        if isinstance(self.focused, ListView):
+            self.action_toggle()
+        elif isinstance(self.focused, Button):
+            if self.focused.id == "save":
+                self.action_save()
+            elif self.focused.id == "back":
+                self.action_cancel()
+
     def action_save(self) -> None:
         save_settings(self.catalog_path, self.settings)
         self.dismiss(True)
@@ -657,6 +687,23 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key not in {"up", "down", "left", "right"} or not isinstance(
+            self.focused, Button
+        ):
+            return
+        buttons = self._settings_actions()
+        index = buttons.index(self.focused)
+        if event.key == "up":
+            self._focus_settings_list() if index == 0 else buttons[index - 1].focus()
+        elif event.key == "down" and index < len(buttons) - 1:
+            buttons[index + 1].focus()
+        elif event.key == "left" and index > 0:
+            buttons[index - 1].focus()
+        elif event.key == "right" and index < len(buttons) - 1:
+            buttons[index + 1].focus()
+        event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
@@ -739,19 +786,19 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
-    #shell { width: 98%; height: 1fr; margin: 1; padding: 1 2; border: round #3b82f6; background: #131d38; }
-    TabbedContent { height: 1fr; }
+    #shell { width: 98%; height: 1fr; min-height: 0; margin: 0; padding: 0 1; border: round #3b82f6; background: #131d38; }
+    TabbedContent { height: 1fr; min-height: 0; }
     TabPane { padding: 1 2; }
-    .official-layout { height: 1fr; min-height: 10; }
+    .official-layout { height: 1fr; min-height: 0; }
     .official-info { width: 2fr; padding: 1 2; border: round #263b68; background: #0f1730; }
     .official-selection { width: 1fr; margin-left: 1; padding: 1 2; border: round #3b82f6; background: #101b36; }
     .section-title { color: #8be9fd; text-style: bold; }
-    .provider-list { height: 1fr; min-height: 8; border: round #263b68; background: #0f1730; }
+    .provider-list { height: 1fr; min-height: 0; border: round #263b68; background: #0f1730; }
     .provider-list > ListItem { min-height: 3; padding: 1 2; }
-    .actions { height: auto; min-height: 4; margin-top: 1; }
+    .actions { height: auto; min-height: 4; margin-top: 1; overflow-x: auto; scrollbar-size: 1 1; }
     Button { margin-right: 1; background: #2563eb; color: white; }
     #back { background: #374151; }
-    #windows-status { height: auto; min-height: 4; color: #8be9fd; padding: 1 0; }
+    #windows-status { height: auto; min-height: 2; color: #8be9fd; padding: 1 0; }
     .error { color: #ff6b8a; }
     """
     BINDINGS = [
@@ -815,6 +862,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                         )
             yield Static("Loading Windows desktop status …", id="windows-status")
             with Horizontal(classes="actions"):
+                yield Button(self._shortcut_label(), id="portable-shortcut")
                 yield Button("Back to settings", id="back")
         yield Footer()
 
@@ -906,8 +954,22 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         if self.query_one(TabbedContent).active == "official-tab":
             ids = ("official-sync", "back")
         else:
-            ids = ("portable-create", "portable-refresh", "portable-repair", "portable-sync", "back")
+            ids = (
+                "portable-create",
+                "portable-refresh",
+                "portable-repair",
+                "portable-sync",
+                "portable-shortcut",
+                "back",
+            )
         return tuple(self.query_one(f"#{button_id}", Button) for button_id in ids)
+
+    def _shortcut_label(self) -> str:
+        state = "ON" if self.settings["windows"]["create_desktop_shortcut"] else "OFF"
+        return f"Desktop shortcut: {state}"
+
+    def _refresh_shortcut_button(self) -> None:
+        self.query_one("#portable-shortcut", Button).label = self._shortcut_label()
 
     def _focus_windows_tabs(self) -> None:
         self.query_one(TabbedContent).query_one(Tabs).focus()
@@ -1014,6 +1076,7 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         await self.app.push_screen(self.progress_screen)
         try:
             from .windows_portable import (
+                create_portable_shortcut,
                 install_portable,
                 refresh_portable,
                 repair_portable,
@@ -1038,13 +1101,15 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
                 assert selected is not None
                 windows["mode"] = "portable"
                 windows["portable_default_provider_id"] = selected.id
-                await asyncio.to_thread(
+                portable = await asyncio.to_thread(
                     install_portable,
                     None,
                     prepare_config=lambda: self._write_desktop_config(selected),
                     progress=self._progress,
                 )
                 save_settings(self.catalog_path, self.settings)
+                if windows["create_desktop_shortcut"] and portable.executable is not None:
+                    await asyncio.to_thread(create_portable_shortcut, portable.executable)
             elif action == "portable-refresh":
                 await asyncio.to_thread(refresh_portable, progress=self._progress)
             elif action == "portable-repair":
@@ -1076,9 +1141,40 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         await self._load_status()
         self.progress_screen.finish("Completed. Review the detailed log, then close.")
 
+    async def _toggle_portable_shortcut(self) -> None:
+        status = self.query_one("#windows-status", Static)
+        self.settings = load_settings(self.catalog_path)
+        windows = self.settings["windows"]
+        enabled = not windows["create_desktop_shortcut"]
+        if enabled:
+            try:
+                from .windows_portable import create_portable_shortcut, portable_status
+
+                portable = await asyncio.to_thread(portable_status)
+                if portable.executable is not None:
+                    await asyncio.to_thread(create_portable_shortcut, portable.executable)
+            except (ConfigError, OSError) as exc:
+                status.update(str(exc))
+                status.add_class("error")
+                return
+        windows["create_desktop_shortcut"] = enabled
+        save_settings(self.catalog_path, self.settings)
+        self._refresh_shortcut_button()
+        status.remove_class("error")
+        status.update(
+            "Portable Codex desktop shortcut created."
+            if enabled and "portable" in locals() and portable.executable is not None
+            else "Portable Codex desktop shortcut will be created after the next portable create or sync."
+            if enabled
+            else "Desktop shortcut creation disabled. Existing shortcut was left unchanged."
+        )
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
         if event.button.id == "back":
             self.dismiss(True)
+        elif event.button.id == "portable-shortcut":
+            self.run_worker(self._toggle_portable_shortcut(), exclusive=True)
         elif event.button.id:
             self.run_worker(self._run_action(event.button.id), exclusive=True)
 

@@ -2104,6 +2104,50 @@ def restore_backup(app: Path, backup: Path) -> Path:
     return failed_copy
 
 
+def latest_original_backup(app: Path, backup_dir: Path) -> Path:
+    """Find the newest verified, unpatched backup for this app build."""
+    info, _ = load_plist(app / "Contents" / "Info.plist")
+    version = re.sub(r"[^A-Za-z0-9._-]+", "-", str(info.get("CFBundleShortVersionString", "unknown")))
+    build = re.sub(r"[^A-Za-z0-9._-]+", "-", str(info.get("CFBundleVersion", "unknown")))
+    prefix = f"ChatGPT-{version}-build-{build}-"
+    backups = sorted(
+        (path for path in backup_dir.glob(f"{prefix}*.app") if path.is_dir()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for backup in backups:
+        archive = backup / "Contents" / "Resources" / "app.asar"
+        if archive.is_file() and not contains_marker(archive):
+            return backup
+    raise PatchError(
+        f"No verified original backup for ChatGPT {version}, build {build} was found in {backup_dir}."
+    )
+
+
+def restore_original_app(app: Path, backup: Path, progress: PatchProgress | None = None) -> Path:
+    """Restore a full verified app backup without touching Codex configuration or sessions."""
+    backup_asar = backup / "Contents" / "Resources" / "app.asar"
+    backup_info = backup / "Contents" / "Info.plist"
+    if not backup_asar.is_file() or not backup_info.is_file() or contains_marker(backup_asar):
+        raise PatchError(f"Backup is not a verified original ChatGPT app: {backup}")
+    report(progress, "process stop", "closing the patched desktop app before restore")
+    gracefully_close_target_app_processes(app)
+    report(progress, "atomic replacement", "restoring the original desktop app from backup")
+    failed_copy = restore_backup(app, backup)
+    restored_asar = app / "Contents" / "Resources" / "app.asar"
+    restored_info = app / "Contents" / "Info.plist"
+    report(progress, "verification", "verifying the restored original desktop app")
+    if (
+        not restored_asar.is_file()
+        or restored_asar.read_bytes() != backup_asar.read_bytes()
+        or not restored_info.is_file()
+        or restored_info.read_bytes() != backup_info.read_bytes()
+        or contains_marker(restored_asar)
+    ):
+        raise PatchError(f"Restored app does not match the verified original backup: {backup}")
+    return failed_copy
+
+
 @contextmanager
 def restore_app_after_failure(
     app: Path, backup: Path, progress: PatchProgress | None

@@ -110,7 +110,7 @@ def test_each_page_exposes_only_its_relevant_footer_actions(tmp_path):
 
             app.push_screen(SettingsScreen(catalog_path))
             await pilot.pause()
-            assert _visible_actions(app.screen) == {"toggle", "save", "cancel"}
+            assert _visible_actions(app.screen) == {"select", "cancel"}
             app.pop_screen()
             await pilot.pause()
 

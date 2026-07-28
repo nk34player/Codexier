@@ -20,11 +20,13 @@ from codexier.windows_portable import (
     _default_health_check,
     _remove_tree,
     _portable_paths,
+    create_portable_shortcut,
     discover_official_package,
     install_portable,
     portable_root,
     portable_status,
     refresh_portable,
+    repair_portable,
     require_shared_codex_home,
     sync_and_launch_windows,
  )
@@ -96,6 +98,33 @@ def test_portable_launch_disables_app_updates(tmp_path: Path, monkeypatch):
     assert launched["command"][0] == str(executable)
     assert launched["command"][1].endswith(r"PortableCodex\user-data")
     assert launched["env"]["CODEX_SPARKLE_ENABLED"] == "false"
+
+
+def test_portable_desktop_shortcut_uses_private_data_and_portable_icon(tmp_path: Path):
+    executable = tmp_path / "PortableCodex" / "Codex.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"portable-exe")
+    called = {}
+
+    def run(command, **kwargs):
+        called.update(command=command, **kwargs)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    create_portable_shortcut(
+        executable,
+        environ={"LOCALAPPDATA": str(tmp_path / "Local")},
+        run=run,
+    )
+
+    assert called["command"][:3] == ["powershell.exe", "-NoProfile", "-NonInteractive"]
+    assert "Portable Codex.lnk" in called["command"][-1]
+    assert "CODEX_SPARKLE_ENABLED" in called["command"][-1]
+    assert "EncodedCommand" in called["command"][-1]
+    assert called["env"]["CODEXIER_PORTABLE_EXECUTABLE"] == str(executable)
+    assert called["env"]["CODEXIER_PORTABLE_ARGUMENTS"].endswith(
+        r"PortableCodex\user-data"
+    )
+    assert called["env"]["CODEXIER_PORTABLE_WORKING_DIRECTORY"] == str(executable.parent)
 
 
 def test_health_check_closes_only_the_launched_portable_process(tmp_path: Path, monkeypatch):
@@ -369,6 +398,38 @@ def test_refresh_requires_an_existing_portable_app(tmp_path: Path):
         refresh_portable(package=package_fixture(tmp_path / "source"), environ={"LOCALAPPDATA": str(tmp_path / "Local")})
 
 
+def test_repair_patches_the_existing_portable_archive_without_recloning(tmp_path: Path, monkeypatch):
+    environ = {"LOCALAPPDATA": str(tmp_path / "Local")}
+    config = tmp_path / "desktop-model-providers.json"
+    config.write_text('{"version": 2, "providers": []}')
+    package = package_fixture(tmp_path / "source")
+    monkeypatch.setattr("codexier.windows_portable.detect_chatgpt_processes", lambda **_kwargs: ())
+    monkeypatch.setattr("codexier.windows_portable.patch_windows_app", patch_staged)
+    installed = install_portable(
+        config,
+        package=package,
+        environ=environ,
+        health_check=lambda _path: True,
+        close_processes=lambda _items: CloseResult(True, "closed"),
+        detect_processes=lambda **_kwargs: (),
+    )
+    assert installed.archive is not None
+    installed.archive.write_bytes(valid_asar())
+    patched: list[Path] = []
+    monkeypatch.setattr(
+        "codexier.windows_portable.patch_windows_app",
+        lambda archive, *_args, **_kwargs: patched.append(archive) or patch_staged(archive),
+    )
+    monkeypatch.setattr(
+        "codexier.windows_portable.shutil.copytree",
+        lambda *_args, **_kwargs: pytest.fail("Repair must not clone a new portable app"),
+    )
+    repaired = repair_portable(config, environ=environ)
+
+    assert repaired.patched
+    assert patched == [installed.archive]
+
+
 def test_portable_status_detects_manual_update_and_already_current_install(
     tmp_path: Path, monkeypatch
 ):
@@ -542,6 +603,11 @@ def test_portable_sync_exports_all_enabled_providers_and_launches_copy(
         lambda _items: CloseResult(True, "closed"),
     )
     monkeypatch.setattr("codexier.windows_portable.patch_windows_app", lambda *_args, **_kwargs: object())
+    shortcuts: list[Path] = []
+    monkeypatch.setattr(
+        "codexier.windows_portable.create_portable_shortcut",
+        lambda path, **_kwargs: shortcuts.append(path),
+    )
     one, two, off = provider("One"), provider("Two"), provider("Off", enabled=False)
     settings = {
         "context_window": 250000,
@@ -550,6 +616,7 @@ def test_portable_sync_exports_all_enabled_providers_and_launches_copy(
             "mode": "portable",
             "official_provider_id": None,
             "portable_default_provider_id": None,
+            "create_desktop_shortcut": True,
         },
     }
     launched: list[Path] = []
@@ -566,6 +633,7 @@ def test_portable_sync_exports_all_enabled_providers_and_launches_copy(
     config = tomllib.loads(result.profile.config_path.read_text())
     desktop = json.loads(result.profile.desktop_config_path.read_text())
     assert launched == [executable]
+    assert shortcuts == [executable]
     assert set(key for key in config["model_providers"] if key.startswith("codexier-")) == {"codexier-one", "codexier-two"}
     assert [item["id"] for item in desktop["providers"]] == ["codexier-one", "codexier-two"]
     assert all(item["id"] != "openai" for item in desktop["providers"])

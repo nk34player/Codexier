@@ -341,6 +341,14 @@ def apply_desktop_patch(
 def restore_desktop_patch(target: DesktopPatchTarget, backup: Path) -> None:
     if target.diagnostic:
         raise ConfigError(target.diagnostic)
+    if target.platform == "darwin":
+        from .desktop_patch_macos import PatchError, restore_original_app
+
+        try:
+            restore_original_app(target.archive_path.parents[2], backup)
+        except PatchError as exc:
+            raise ConfigError(str(exc)) from exc
+        return
     source = backup / "app.asar"
     if not source.is_file():
         raise ConfigError(f"Backup does not contain app.asar: {backup}")

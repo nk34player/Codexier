@@ -1,4 +1,9 @@
-from codexier.process_manager import CodexProcess, restart_codex
+from codexier.process_manager import (
+    ChatGPTProcess,
+    CodexProcess,
+    gracefully_close_chatgpt_processes,
+    restart_codex,
+)
 
 
 def test_no_process():
@@ -34,3 +39,17 @@ def test_unambiguous_process_restarts():
     result = restart_codex(processes=(process,), terminate=lambda pid, sig: calls.append((pid, sig)), launch=lambda argv: calls.append(tuple(argv)))
     assert result.restarted is True
     assert len(calls) == 2
+
+
+def test_desktop_close_force_terminates_a_process_left_in_the_tray():
+    calls = []
+    states = iter((True, False))
+    result = gracefully_close_chatgpt_processes(
+        (ChatGPTProcess(42, r"C:\Codex.exe", "me"),),
+        timeout_seconds=0.01,
+        request_close=lambda pid: calls.append(("close", pid)),
+        terminate=lambda pid: calls.append(("terminate", pid)),
+        poll=lambda _pid: next(states),
+    )
+    assert result.closed
+    assert calls == [("close", 42), ("terminate", 42)]

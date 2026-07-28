@@ -1,5 +1,6 @@
 from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -175,6 +176,42 @@ def test_missing_provider_config_is_not_replaced_with_examples(tmp_path: Path):
         ensure_provider_config(config, overwrite=False)
 
     assert not config.exists()
+
+
+def test_restore_original_app_leaves_codex_config_and_sessions_untouched(tmp_path: Path, monkeypatch):
+    import codexier.desktop_patch_macos as macos
+
+    app = tmp_path / "ChatGPT.app"
+    backup = tmp_path / "ChatGPT-backup.app"
+    for bundle, archive in ((app, b"patched" + macos.PATCH_MARKER), (backup, b"original")):
+        resources = bundle / "Contents" / "Resources"
+        resources.mkdir(parents=True)
+        (resources / "app.asar").write_bytes(archive)
+        (bundle / "Contents" / "Info.plist").write_bytes(b"plist")
+    config = tmp_path / ".codex" / "config.toml"
+    session = tmp_path / ".codex" / "sessions" / "thread.jsonl"
+    config.parent.mkdir()
+    session.parent.mkdir()
+    config.write_bytes(b"config")
+    session.write_bytes(b"session")
+    failed = tmp_path / "ChatGPT.patch-failed.app"
+
+    monkeypatch.setattr(macos, "gracefully_close_target_app_processes", lambda _app: False)
+
+    def restore(target: Path, source: Path) -> Path:
+        (target / "Contents" / "Resources" / "app.asar").write_bytes(
+            (source / "Contents" / "Resources" / "app.asar").read_bytes()
+        )
+        (target / "Contents" / "Info.plist").write_bytes(
+            (source / "Contents" / "Info.plist").read_bytes()
+        )
+        return failed
+
+    monkeypatch.setattr(macos, "restore_backup", restore)
+    assert macos.restore_original_app(app, backup) == failed
+    assert (app / "Contents" / "Resources" / "app.asar").read_bytes() == b"original"
+    assert config.read_bytes() == b"config"
+    assert session.read_bytes() == b"session"
 
 
 def test_patch_hunks_match_minified_javascript_without_prettier():

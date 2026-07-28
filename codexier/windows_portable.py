@@ -113,7 +113,7 @@ def _close_all_desktop_processes(
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
     """Wait for a fresh process scan to prove the desktop app is fully closed."""
-    _emit(progress, "process shutdown", "requesting graceful shutdown of Official and Portable Codex")
+    _emit(progress, "process shutdown", "closing Official and Portable Codex, including tray processes")
     closed = close_processes(detect_processes(platform="win32"))
     if not getattr(closed, "closed", False):
         raise ConfigError(getattr(closed, "message", "Codex did not close normally."))
@@ -128,8 +128,8 @@ def _close_all_desktop_processes(
                 for process in processes
             )
             raise ConfigError(
-                "Codex is still closing after the normal close request "
-                f"(PIDs: {details}). Close it normally and try again; "
+                "Codex is still running after shutdown "
+                f"(PIDs: {details}). End those processes in Task Manager, then try again; "
                 "Codexier did not copy or modify any app files."
             )
         sleep(0.1)
@@ -411,12 +411,61 @@ def _portable_environment() -> dict[str, str]:
     return environment
 
 
-def _portable_command(executable: Path, *arguments: str) -> list[str]:
+def _portable_command(
+    executable: Path, *arguments: str, environ: Mapping[str, str] | None = None
+) -> list[str]:
     return [
         str(executable),
-        f"--user-data-dir={portable_root() / 'user-data'}",
+        f"--user-data-dir={portable_root(environ) / 'user-data'}",
         *arguments,
     ]
+
+
+def create_portable_shortcut(
+    executable: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Create or update the Portable Codex shortcut on the Windows Desktop."""
+    environment = _portable_environment()
+    if environ is not None:
+        environment.update(environ)
+    environment["CODEXIER_PORTABLE_EXECUTABLE"] = str(executable)
+    environment["CODEXIER_PORTABLE_ARGUMENTS"] = _portable_command(
+        executable, environ=environ
+    )[1]
+    environment["CODEXIER_PORTABLE_WORKING_DIRECTORY"] = str(executable.parent)
+    script = """
+$desktop = [Environment]::GetFolderPath('Desktop')
+if (-not $desktop) { throw 'Windows Desktop folder is unavailable.' }
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'Portable Codex.lnk'))
+$executable = "'" + $env:CODEXIER_PORTABLE_EXECUTABLE.Replace("'", "''") + "'"
+$arguments = '"' + $env:CODEXIER_PORTABLE_ARGUMENTS + '"'
+$workingDirectory = "'" + $env:CODEXIER_PORTABLE_WORKING_DIRECTORY.Replace("'", "''") + "'"
+$launch = "`$env:CODEX_SPARKLE_ENABLED = 'false'`nStart-Process -FilePath $executable -ArgumentList $arguments -WorkingDirectory $workingDirectory"
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
+$shortcut.TargetPath = (Get-Command powershell.exe).Source
+$shortcut.Arguments = "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded"
+$shortcut.WorkingDirectory = $env:CODEXIER_PORTABLE_WORKING_DIRECTORY
+$shortcut.IconLocation = "$env:CODEXIER_PORTABLE_EXECUTABLE,0"
+$shortcut.WindowStyle = 7
+$shortcut.Save()
+"""
+    try:
+        result = run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+    except OSError as exc:
+        raise ConfigError(f"Could not create the Portable Codex desktop shortcut: {exc}") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout or "").strip()
+        message = "Could not create the Portable Codex desktop shortcut."
+        raise ConfigError(f"{message} {detail}" if detail else message)
 
 
 def _remove_tree(path: Path) -> None:
@@ -641,13 +690,6 @@ def repair_portable(
     status = portable_status(environ=environ)
     if not status.installed or status.archive is None:
         raise ConfigError("Create the portable app before repairing its patch.")
-    if not status.patched:
-        return install_portable(
-            config,
-            prepare_config=prepare_config,
-            environ=environ,
-            progress=progress,
-        )
     _emit(progress, "validation", "validated the portable executable and app.asar paths")
     _close_all_desktop_processes(
         progress,
@@ -770,6 +812,11 @@ def sync_and_launch_windows(
                 "Provider sync succeeded, but portable patch verification failed. "
                 "Use Settings → Portable App → Repair patch."
             )
+        if windows.get("create_desktop_shortcut"):
+            try:
+                create_portable_shortcut(portable.executable, environ=environ)
+            except ConfigError as exc:
+                _emit(progress, "launch", f"desktop shortcut skipped: {exc}")
         _emit(progress, "launch", f"launching portable Codex from {portable.executable}")
         try:
             launch_portable(portable.executable)

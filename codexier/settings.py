@@ -24,6 +24,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "mode": "official",
         "official_provider_id": None,
         "portable_default_provider_id": None,
+        "create_desktop_shortcut": False,
     },
 }
 
@@ -89,6 +90,8 @@ def validate_windows_settings(settings: dict[str, Any]) -> None:
         value = windows.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise ConfigError(f"Windows setting {key} must be a provider id or null.")
+    if not isinstance(windows.get("create_desktop_shortcut"), bool):
+        raise ConfigError("Windows setting create_desktop_shortcut must be true or false.")
 
 
 def save_settings(provider_catalog: Path, settings: dict[str, Any]) -> Path:

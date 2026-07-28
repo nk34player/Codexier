@@ -26,7 +26,12 @@ from .provider_store import create_provider_catalog
 from .setup_tui import run_provider_manager
 from .settings import load_settings
 from .ui import render_preview
-from .desktop_patch import apply_desktop_patch, default_target, restore_desktop_patch
+from .desktop_patch import (
+    apply_desktop_patch,
+    default_target,
+    patch_status,
+    restore_desktop_patch,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,6 +85,30 @@ def _apply_post_sync_desktop_patch() -> None:
             "Provider sync succeeded, but desktop patching did not complete: "
             f"{exc}. Your Codex configuration and desktop app data were left intact."
         )
+
+
+def _manage_macos_desktop_app(*, install_patch: bool) -> None:
+    """Let macOS users keep the signed app normal or install/restore the picker patch."""
+    target = default_target()
+    backup_root = Path.home() / ".codex" / "codexier-desktop-backups"
+    status = patch_status(target)
+    if status.patched:
+        if _confirm("Use the official app normally and restore its original backup?"):
+            from .desktop_patch_macos import latest_original_backup
+
+            try:
+                restore_desktop_patch(
+                    target, latest_original_backup(target.archive_path.parents[2], backup_root)
+                )
+                print("Official desktop app restored. Codex configuration and sessions were unchanged.")
+            except (ConfigError, OSError) as exc:
+                print(f"Could not restore the official desktop app: {exc}")
+        else:
+            print("Keeping the provider-first desktop patch.")
+    elif install_patch or _confirm("Install the provider-first desktop picker?"):
+        _apply_post_sync_desktop_patch()
+    else:
+        print("Official desktop app left unmodified.")
 
 
 def _confirm(prompt: str) -> bool:
@@ -171,9 +200,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"Model catalog installed: {result.catalog_path}")
                 if args.print_command or sys.platform.startswith("linux"):
                     print("Run: " + " ".join(launch_command()))
-                if sys.platform == "darwin" or (
-                    args.patch_desktop and sys.platform != "win32"
-                ):
+                if sys.platform == "darwin":
+                    _manage_macos_desktop_app(install_patch=args.patch_desktop)
+                elif args.patch_desktop and sys.platform != "win32":
                     _apply_post_sync_desktop_patch()
             else:
                 from .backup import atomic_write, backup_config

@@ -1,6 +1,7 @@
 import json
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from textual.app import App
 from textual.widgets import Button, Label, ListItem, ListView, RichLog, Static, TabbedContent, Tabs
@@ -9,6 +10,7 @@ from codexier.models import ModelDefinition, Provider
 from codexier.settings import DEFAULT_SETTINGS, MAX_CONTEXT_WINDOW, load_settings, save_settings
 from codexier.setup_tui import (
     ContextProfilesScreen,
+    ProviderManagerApp,
     SettingsScreen,
     WindowsDesktopScreen,
     WindowsProgressScreen,
@@ -47,6 +49,7 @@ def test_windows_mode_selections_round_trip_independently(tmp_path: Path):
         "mode": "portable",
         "official_provider_id": "official-provider",
         "portable_default_provider_id": "portable-provider",
+        "create_desktop_shortcut": True,
     }
     save_settings(provider_path, settings)
     assert load_settings(provider_path)["windows"] == settings["windows"]
@@ -64,6 +67,41 @@ def test_windows_settings_screen_exposes_official_and_portable_actions(tmp_path:
     assert "Refresh portable status" in copy
     assert "Repair patch" in copy
     assert "Sync and launch portable app" in copy
+    assert "Desktop shortcut:" in screen._shortcut_label()
+
+
+def test_portable_shortcut_toggle_persists_preference(tmp_path: Path, monkeypatch):
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            "codexier.windows_portable.portable_status",
+            lambda: SimpleNamespace(executable=None),
+        )
+        app = App()
+        screen = WindowsDesktopScreen(
+            tmp_path / "providers.json",
+            (
+                Provider(
+                    "example",
+                    "Example",
+                    "https://example.test/v1",
+                    "key",
+                    (),
+                    {},
+                    True,
+                ),
+            ),
+            initial_tab="portable",
+        )
+        async with app.run_test() as pilot:
+            app.push_screen(screen)
+            await pilot.pause()
+            await screen._toggle_portable_shortcut()
+            assert load_settings(tmp_path / "providers.json")["windows"][
+                "create_desktop_shortcut"
+            ]
+            assert str(screen.query_one("#portable-shortcut", Button).label).endswith("ON")
+
+    asyncio.run(scenario())
 
 
 def test_windows_tabs_and_portable_controls_use_arrow_keys(tmp_path: Path):
@@ -103,6 +141,56 @@ def test_windows_tabs_and_portable_controls_use_arrow_keys(tmp_path: Path):
             assert app.focused is view
             await pilot.press("up")
             assert app.focused is tabs
+
+    asyncio.run(scenario())
+
+
+def test_windows_portable_actions_reach_back_with_down_at_small_size(tmp_path: Path):
+    async def scenario() -> None:
+        provider = Provider(
+            "example",
+            "Example",
+            "https://example.test/v1",
+            "key",
+            (ModelDefinition("example-model", "Example Model"),),
+            {},
+            True,
+        )
+        app = App()
+        async with app.run_test(size=(80, 24)) as pilot:
+            screen = WindowsDesktopScreen(
+                tmp_path / "providers.json", (provider,), initial_tab="portable"
+            )
+            app.push_screen(screen)
+            await pilot.pause()
+            await pilot.press("down")
+            await pilot.press("down")
+            for _ in range(5):
+                await pilot.press("down")
+            assert app.focused is screen.query_one("#back", Button)
+
+    asyncio.run(scenario())
+
+
+def test_windows_back_returns_to_settings_without_exiting_the_manager(tmp_path: Path):
+    async def scenario() -> None:
+        provider = Provider("example", "Example", "https://example.test/v1", "key", (), {}, True)
+        app = ProviderManagerApp(tmp_path / "providers.json", (provider,))
+        settings = SettingsScreen(tmp_path / "providers.json", (provider,))
+        desktop = WindowsDesktopScreen(tmp_path / "providers.json", (provider,))
+
+        async def skip_status_load() -> None:
+            pass
+
+        desktop._load_status = skip_status_load  # type: ignore[method-assign]
+        async with app.run_test() as pilot:
+            app.push_screen(settings)
+            await pilot.pause()
+            app.push_screen(desktop)
+            await pilot.pause()
+            await pilot.click("#back")
+            await pilot.pause()
+            assert app.screen is settings
 
     asyncio.run(scenario())
 
@@ -198,16 +286,18 @@ def test_settings_accept_maximum_context_limit(tmp_path: Path):
     assert load_settings(provider_path)["context_window"] == 10_000_000
 
 
-def test_settings_toggle_updates_the_existing_item_without_duplicate_ids(tmp_path: Path):
+def test_settings_enter_toggles_the_existing_item_without_duplicate_ids(tmp_path: Path):
     async def scenario() -> None:
         app = App()
         async with app.run_test() as pilot:
             app.push_screen(SettingsScreen(tmp_path / "providers.json"))
             await pilot.pause()
-            await pilot.press("space")
-            await pilot.pause()
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
+            await pilot.press("space")
+            assert screen.settings["supports_parallel_tool_calls"] is False
+            await pilot.press("enter")
+            await pilot.pause()
             assert screen.settings["supports_parallel_tool_calls"] is True
             assert len(screen.query_one("#settings").children) == len(screen.setting_keys)
 
@@ -224,9 +314,9 @@ def test_settings_toggle_switches_input_modalities(tmp_path: Path):
             assert isinstance(screen, SettingsScreen)
             settings_view = screen.query_one("#settings")
             settings_view.index = 4
-            await pilot.press("space")
+            await pilot.press("enter")
             assert screen.settings["input_modalities"] == ["text"]
-            await pilot.press("space")
+            await pilot.press("enter")
             assert screen.settings["input_modalities"] == ["text", "image"]
 
     asyncio.run(scenario())
@@ -269,7 +359,7 @@ def test_context_profile_editor_saves_both_limits(tmp_path: Path):
     asyncio.run(scenario())
 
 
-def test_context_profiles_open_with_space_and_enter_saves_settings(tmp_path: Path):
+def test_context_profiles_open_with_enter_and_save_from_action_button(tmp_path: Path):
     async def scenario() -> None:
         app = App()
         async with app.run_test() as pilot:
@@ -278,16 +368,21 @@ def test_context_profiles_open_with_space_and_enter_saves_settings(tmp_path: Pat
             screen = app.screen
             assert isinstance(screen, SettingsScreen)
             settings_view = screen.query_one("#settings")
-            settings_view.index = len(screen.SETTING_KEYS) - 1
+            settings_view.index = next(
+                i for i, (key, _) in enumerate(screen.setting_keys)
+                if key == "context_profiles"
+            )
 
-            await pilot.press("space")
+            await pilot.press("enter")
             await pilot.pause()
             assert isinstance(app.screen, ContextProfilesScreen)
             app.pop_screen()
             await pilot.pause()
 
             settings_view = screen.query_one("#settings")
-            settings_view.index = len(screen.SETTING_KEYS) - 1
+            settings_view.index = len(screen.setting_keys) - 1
+            settings_view.focus()
+            await pilot.press("down")
             await pilot.press("enter")
             await pilot.pause()
             assert app.screen is not screen
