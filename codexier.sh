@@ -17,6 +17,4 @@ else
   STATUS=$?
 fi
 
-printf '\nCodexier finished. Press Enter to close this window.'
-read -r
 exit "$STATUS"

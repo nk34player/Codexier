@@ -2345,30 +2345,22 @@ def patch_app(
     info, plist_format = load_plist(info_path)
     version = str(info.get("CFBundleShortVersionString", "unknown"))
     build = str(info.get("CFBundleVersion", "unknown"))
-    if contains_marker(asar_path):
-        terminal_status(
-            "APP",
-            f"Detected ChatGPT {version}, build {build}.",
-            "34",
-            detail=app,
-        )
-        print_completion_summary(config, already_installed=True)
-        return
-
-    is_upgrade = contains_legacy_marker(asar_path)
-    if is_upgrade:
-        terminal_status(
-            "UPGRADE",
-            "An earlier provider-picker patch was detected and will be upgraded.",
-            "35",
-            detail=f"ChatGPT {version}, build {build}",
-        )
     sidecar = asar_path.with_name(f"{asar_path.name}.bak")
-    if is_upgrade and not sidecar.exists():
-        raise PatchError(
-            "Cannot upgrade a previously patched app without an immutable original "
-            f"backup at: {sidecar}"
+    if contains_marker(asar_path) or contains_legacy_marker(asar_path):
+        if not sidecar.is_file() or contains_marker(sidecar) or contains_legacy_marker(sidecar):
+            raise PatchError(
+                "Cannot apply new patches to an already patched app without a "
+                f"verified immutable original backup at: {sidecar}"
+            )
+        terminal_status(
+            "RESTORE",
+            "Restoring the immutable original app before applying new patches.",
+            "34",
+            detail=sidecar,
         )
+        restore_archive_backup(app, sidecar, progress)
+        info, plist_format = load_plist(info_path)
+
     sidecar, created = immutable_file_backup(asar_path)
     if contains_marker(sidecar) or contains_legacy_marker(sidecar):
         raise PatchError(f"Immutable backup is patched and cannot be used: {sidecar}")

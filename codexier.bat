@@ -14,7 +14,4 @@ if "%CODEXIER_EXIT%"=="130" (
     endlocal & exit /b 130
 )
 
-echo.
-echo Codexier finished. Press any key to close this window.
-pause >nul
 endlocal & exit /b %CODEXIER_EXIT%

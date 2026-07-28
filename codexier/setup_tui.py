@@ -556,6 +556,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         self.providers = providers
         self.settings = load_settings(catalog_path)
         self.index = 0
+        self.application_type_state = self.settings["windows"]["mode"]
         self.setting_keys = self.SETTING_KEYS + (("application_type", "Application type"),)
 
     def compose(self) -> ComposeResult:
@@ -577,6 +578,18 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
         view = self.query_one("#settings", ListView)
         view.index = 0
         view.focus()
+        if sys.platform == "darwin":
+            self.run_worker(self._load_application_type_state(), exclusive=True)
+
+    async def _load_application_type_state(self) -> None:
+        try:
+            from .desktop_patch import default_target, macos_app_info
+
+            app = await asyncio.to_thread(macos_app_info, default_target("darwin"))
+            self.application_type_state = "patched" if app.patch_status.patched else "official"
+            self._refresh_setting("application_type")
+        except (ConfigError, OSError):
+            pass
 
     def _render_settings(self) -> None:
         view = self.query_one("#settings", ListView)
@@ -606,7 +619,7 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
                 self.settings["auto_compact_token_limit"],
             )
         if key == "application_type":
-            return self.settings["windows"]["mode"]
+            return self.application_type_state
         return self.settings.get(key)
 
     @staticmethod
@@ -679,10 +692,13 @@ class SettingsScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]):
     def _windows_desktop_finished(self, changed: bool | None) -> None:
         if changed:
             self.settings = load_settings(self.catalog_path)
-            self._refresh_setting("application_type")
             self.query_one("#status", Static).update(
                 "Application type saved. Press Enter to save settings."
             )
+        if sys.platform == "darwin":
+            self.run_worker(self._load_application_type_state(), exclusive=True)
+        else:
+            self._refresh_setting("application_type")
 
     def action_cancel(self) -> None:
         self.dismiss(None)
