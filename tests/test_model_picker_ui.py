@@ -277,3 +277,33 @@ def test_apply_persists_every_enabled_provider_with_existing_default(tmp_path):
         assert app.return_value == default
 
     asyncio.run(scenario())
+
+
+def test_interactive_sync_starts_in_tui_instead_of_returning_to_cli(tmp_path, monkeypatch):
+    async def scenario() -> None:
+        provider = Provider(
+            "demo", "Demo", "https://demo.example/v1", "secret",
+            (ModelDefinition("model-a", "Model A"),), {},
+        )
+        catalog_path = tmp_path / "providers.json"
+        add_provider(catalog_path, provider)
+        app = ProviderManagerApp(
+            catalog_path,
+            (provider,),
+            tmp_path / "config.toml",
+            interactive_sync=True,
+        )
+        started: list[Provider] = []
+        monkeypatch.setattr(app, "_begin_interactive_sync", started.append)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.action_use()
+            await pilot.pause()
+            app.screen.action_apply_profile()
+            await pilot.pause()
+
+        assert started == [provider]
+        assert app.return_value is None
+
+    asyncio.run(scenario())

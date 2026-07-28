@@ -23,7 +23,7 @@ from .provider_store import (
     resolve_provider_path,
 )
 from .provider_store import create_provider_catalog
-from .setup_tui import run_provider_manager
+from .setup_tui import ProviderManagerResult, run_provider_manager
 from .settings import load_settings
 from .ui import render_preview
 from .desktop_patch import (
@@ -156,9 +156,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 None if args.dry_run else target.path,
                 applied_id=applied_id,
                 migration_message=migration_message,
+                interactive_sync=not args.dry_run and sys.platform == "darwin",
             )
             if provider is None:
                 return 0
+            if isinstance(provider, ProviderManagerResult):
+                if provider.synced_in_tui:
+                    continue
+                provider = provider.provider
             # The TUI commits session-only provider toggles when Apply is
             # confirmed. Reload them before building the actual Codex profile.
             providers = ProviderStore(catalog_path).load()

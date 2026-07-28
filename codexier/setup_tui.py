@@ -4,7 +4,9 @@ import asyncio
 import json
 import sys
 import time
-from dataclasses import replace
+from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import dataclass, replace
+from io import StringIO
 from pathlib import Path
 
 from textual import events, on
@@ -56,6 +58,12 @@ _HIDDEN_PROVIDER_MANAGER_BINDINGS = [
     Binding(key, "ignore_manager_shortcut", show=False)
     for key in ("a", "e", "d", "q", "s", "space")
 ]
+
+@dataclass(frozen=True)
+class ProviderManagerResult:
+    provider: Provider
+    synced_in_tui: bool = False
+
 
 _MACOS_PATCHES = (
     (
@@ -228,7 +236,7 @@ def run_setup_tui(catalog_path) -> bool:
     return bool(SetupApp(catalog_path).run())
 
 
-class ProviderManagerApp(App[Provider | None]):
+class ProviderManagerApp(App[Provider | ProviderManagerResult | None]):
     TITLE = "Codexier"
     CSS = """
     Screen { background: #0b1020; color: #e7eefc; }
@@ -259,6 +267,7 @@ class ProviderManagerApp(App[Provider | None]):
         *,
         applied_id: str | None = None,
         migration_message: str | None = None,
+        interactive_sync: bool = False,
     ):
         super().__init__()
         self.title = "Codexier"
@@ -271,7 +280,10 @@ class ProviderManagerApp(App[Provider | None]):
             else (applied_provider_id(target_path) if target_path else None)
         )
         self.migration_message = migration_message
+        self.interactive_sync = interactive_sync
         self.result: Provider | None = None
+        self.progress_screen: WindowsProgressScreen | None = None
+        self._synced_provider: Provider | None = None
         self.app_settings = load_settings(catalog_path)
 
     def compose(self) -> ComposeResult:
@@ -496,12 +508,82 @@ class ProviderManagerApp(App[Provider | None]):
         )
 
     def _apply_finished(self, applied: bool | None) -> None:
-        if applied:
-            for provider in self.providers:
-                update_provider(self.catalog_path, provider)
-            provider = self._default_enabled_provider()
-            if provider:
-                self.exit(provider)
+        if not applied:
+            return
+        for provider in self.providers:
+            update_provider(self.catalog_path, provider)
+        provider = self._default_enabled_provider()
+        if provider is None:
+            return
+        if self.interactive_sync and sys.platform == "darwin":
+            self._begin_interactive_sync(provider)
+            return
+        self.exit(provider)
+
+    def _begin_interactive_sync(self, provider: Provider) -> None:
+        try:
+            from .desktop_patch import default_target
+            from .desktop_patch_macos import find_target_app_processes
+
+            app = default_target("darwin").archive_path.parents[2]
+            processes = find_target_app_processes(app)
+        except (ConfigError, OSError, PatchError) as exc:
+            status = self.query_one("#status", Static)
+            status.update(str(exc))
+            status.add_class("error")
+            return
+        if processes:
+            self.push_screen(
+                ForceCloseConfirmScreen(tuple(pid for pid, _ in processes)),
+                lambda confirmed: self._force_close_sync_confirmed(provider, confirmed),
+            )
+            return
+        self.run_worker(self._run_interactive_sync(provider, force_close=False), exclusive=True)
+
+    def _force_close_sync_confirmed(self, provider: Provider, confirmed: bool | None) -> None:
+        if confirmed:
+            self.run_worker(self._run_interactive_sync(provider, force_close=True), exclusive=True)
+
+    def _interactive_progress(self, percent: int, detail: str) -> None:
+        self.call_from_thread(self._show_interactive_progress, percent, detail)
+
+    def _show_interactive_progress(self, percent: int, detail: str) -> None:
+        if self.progress_screen is not None:
+            self.progress_screen.update_progress(percent, detail)
+
+    def _sync_and_patch(self, provider: Provider, force_close: bool) -> str:
+        from .codex_profile import apply_codex_profiles
+        from .desktop_patch import apply_desktop_patch, default_target
+        from .desktop_patch_macos import gracefully_close_target_app_processes
+
+        self._interactive_progress(5, "sync: writing the shared Codexier profile")
+        apply_codex_profiles(self.providers, provider, settings=load_settings(self.catalog_path))
+        target = default_target("darwin")
+        if force_close:
+            self._interactive_progress(20, "process stop: closing ChatGPT after confirmation")
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                gracefully_close_target_app_processes(target.archive_path.parents[2], force=True)
+        status = apply_desktop_patch(
+            target,
+            Path.home() / ".codex" / "codexier-desktop-backups",
+            progress=self._interactive_progress,
+        )
+        return status.message
+
+    async def _run_interactive_sync(self, provider: Provider, force_close: bool) -> None:
+        self.progress_screen = WindowsProgressScreen("SYNCING ENABLED PROVIDERS")
+        await self.push_screen(self.progress_screen, self._interactive_progress_closed)
+        try:
+            message = await asyncio.to_thread(self._sync_and_patch, provider, force_close)
+        except (ConfigError, OSError, PatchError) as exc:
+            self.progress_screen.finish(str(exc), error=True)
+            return
+        self._synced_provider = provider
+        self.progress_screen.finish(f"Completed. {message}")
+
+    def _interactive_progress_closed(self, _: object) -> None:
+        if self._synced_provider is not None:
+            self.exit(ProviderManagerResult(self._synced_provider, synced_in_tui=True))
 
     @on(ProviderListView.Confirmed)
     def on_provider_confirmed(self, event: ProviderListView.Confirmed) -> None:
@@ -2228,13 +2310,15 @@ def run_provider_manager(
     *,
     applied_id: str | None = None,
     migration_message: str | None = None,
-) -> Provider | None:
+    interactive_sync: bool = False,
+) -> Provider | ProviderManagerResult | None:
     return ProviderManagerApp(
         catalog_path,
         providers,
         target_path,
         applied_id=applied_id,
         migration_message=migration_message,
+        interactive_sync=interactive_sync,
     ).run()
 
 
