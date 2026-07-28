@@ -161,7 +161,7 @@ function codexUseProviderModels(e) {
     upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V6_TO_V7, "picker.js")
     upgraded = (upgraded_central + upgraded_picker).casefold()
 
-    assert "__codexdesktopmodelproviderspatchv13" in upgraded
+    assert "__codexdesktopmodelproviderspatchv14" in upgraded
     assert "chatgpt / openai" not in upgraded
     assert "defaultprovider: `openai`" not in upgraded
     assert "id === `openai`" not in upgraded
@@ -251,7 +251,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV13" in patched
+    assert "__codexDesktopModelProvidersPatchV14" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -289,7 +289,7 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_5848_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV13" in patched
+    assert "__codexDesktopModelProvidersPatchV14" in patched
     assert "p=codexUseProviderModels(p,d,y);" in patched
     assert "codex.customProviderSelection.v2.change" in patched
     assert "codex.customProviderRouting.v4" in patched
@@ -298,7 +298,9 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
     assert "children:[n.extras,l]" in patched
     assert "model:{extras:(0,wQ.jsx)(CodexCustomProviderPickerSection,{})" in patched
     assert "CodexProviderModelLabelV4" in patched
-    assert "model:e,fallback:GM(t,e)?.displayName" in patched
+    assert "typeof e === `string` ? e" in patched
+    assert "typeof e?.id === `string` ? e.id : ``" in patched
+    assert "value:e,fallback:GM(t,e)?.displayName" in patched
     assert "disabled:P||p==null,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re" in patched
     assert "disabled:fe,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re" in patched
     assert "children:[(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),m," not in patched
@@ -348,7 +350,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV13" in patched
+    assert "__codexDesktopModelProvidersPatchV14" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -406,9 +408,10 @@ def test_windows_patches_26721_5848_with_reactive_provider_labels(
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV13" in patched
+    assert "__codexDesktopModelProvidersPatchV14" in patched
     assert "children: e.description || `Custom Provider`" in patched
     assert "CodexProviderModelLabelV4" in patched
+    assert "value:e,fallback:GM(t,e)?.displayName" in patched
     assert "codex.customProviderSelection.v2.change" in patched
 
 

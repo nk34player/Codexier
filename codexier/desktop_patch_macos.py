@@ -44,8 +44,9 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV13"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV14"
 LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV13",
     b"__codexDesktopModelProvidersPatchV12",
     b"__codexDesktopModelProvidersPatchV11",
     b"__codexDesktopModelProvidersPatchV10",
@@ -914,7 +915,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV13 ??= {
+  return (window.__codexDesktopModelProvidersPatchV14 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -992,7 +993,7 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV13 ??= {
+  return (window.__codexDesktopModelProvidersPatchV14 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1028,11 +1029,12 @@ function codexWriteProviderChoiceV4(e) {
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
 }
 function codexPickerModelLabelV4(e, t) {
-  let n = codexPickerProviderRoutingStateV4().config,
+  let o = typeof e === `string` ? e : typeof e?.model === `string` ? e.model : typeof e?.id === `string` ? e.id : ``,
+    n = codexPickerProviderRoutingStateV4().config,
     r = codexReadProviderChoiceV4(n),
     i = n.providers.find((e) => e.id === r);
   for (let a of [i, ...n.providers]) {
-    let r = a?.models.find((t) => t.id === e);
+    let r = a?.models.find((e) => e.id === o);
     if (r != null) return `${r.label} (${a.label})`;
   }
   return t;
@@ -1206,7 +1208,7 @@ def _v7_upgrade_diffs(
 @@ provider marker
  function codexProviderRoutingStateV4() {{
 -  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
-+  return (window.__codexDesktopModelProvidersPatchV13 ??= {{
++  return (window.__codexDesktopModelProvidersPatchV14 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
    }});
 """
@@ -2195,12 +2197,12 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
                 "CodexProviderPatchReact.useEffect(()=>{let e=()=>t(e=>e+1);"
                 "return window.addEventListener(`codex.customProviderSelection.v2.change`,e),"
                 "()=>window.removeEventListener(`codex.customProviderSelection.v2.change`,e)},[]);"
-                "let n=codexPickerModelLabelV4(e.model,e.fallback);"
+                "let n=codexPickerModelLabelV4(e.value,e.fallback);"
                 "return n!=null&&n.trim().length>0?GX(n):(0,P6.jsx)(Z,{"
                 "id:`composer.mode.local.model.custom`,defaultMessage:`Custom`,"
                 "description:`Custom model from config`})}"
                 "function Uol(e,t){return (0,P6.jsx)"
-                "(CodexProviderModelLabelV4,{model:e,fallback:GM(t,e)?.displayName})}",
+                "(CodexProviderModelLabelV4,{value:e,fallback:GM(t,e)?.displayName})}",
                 CODEX_26721_5848_LAYOUT,
             )
             compatible.append((CODEX_26721_5848_LAYOUT, {central: source}))
