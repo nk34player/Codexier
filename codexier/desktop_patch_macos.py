@@ -2480,7 +2480,7 @@ def patch_app(
         except Exception:
             raise
 
-    print_completion_summary(config, backup=backup, upgraded=is_upgrade)
+    print_completion_summary(config, backup=backup, upgraded=False)
 
 
 def main() -> int:

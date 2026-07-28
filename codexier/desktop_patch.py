@@ -500,7 +500,7 @@ def apply_desktop_patch(
     if status.skipped:
         report(emit, "completion", status.message)
         return status
-    if status.patched:
+    if status.patched and target.platform != "darwin":
         report(emit, "completion", "already patched; app.asar was not modified")
         return status
     if not status.supported:
