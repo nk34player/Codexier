@@ -44,8 +44,9 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV20"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV21"
 LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV20",
     b"__codexDesktopModelProvidersPatchV19",
     b"__codexDesktopModelProvidersPatchV18",
     b"__codexDesktopModelProvidersPatchV17",
@@ -921,7 +922,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV20 ??= {
+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1004,7 +1005,7 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV20 ??= {
+  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1175,10 +1176,13 @@ CODEX_26721_5848_MODEL_LABEL_ANCHOR = (
     "description:`Custom model from config`})}"
 )
 CODEX_26721_5848_COMPOSER_LABEL_ANCHOR = (
-    "else if(n){let e;t[3]===Symbol.for(`react.memo_cache_sentinel`)?"
+    "if(r!=null){let e;if(t[0]!==r||t[1]!==c){let n=GX(r);"
+    "e=c?n.replace(/^GPT-/iu,``):n,t[0]=r,t[1]=c,t[2]=e}"
+    "else e=t[2];l=e}else if(n){let e;"
+    "t[3]===Symbol.for(`react.memo_cache_sentinel`)?"
     "(e=(0,Lcs.jsx)(Z,{id:`composer.mode.local.model.custom`,"
     "defaultMessage:`Custom`,description:`Custom model from config`}),"
-    "t[3]=e):e=t[3],l=e}else l=n"
+    "t[3]=e):e=t[3],l=e}else l=n;let u;"
 )
 CODEX_26721_5848_SUBMENU_ANCHOR = (
     "function Scs(e){let t=(0,wcs.c)(12),{submenu:n}=e,r=n.ariaLabel,"
@@ -1241,7 +1245,7 @@ def _v7_upgrade_diffs(
 @@ provider marker
  function codexProviderRoutingStateV4() {{
 -  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {{
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
    }});
 """
@@ -1296,12 +1300,12 @@ CENTRAL_DIFF_V6_TO_V7, PICKER_DIFF_V6_TO_V7 = _v7_upgrade_diffs(
     "V6", "Provider for new tasks"
  )
 
-# V18 to V20: marker bump only. V18 and V20 are both selection-authoritative;
+# V18 to V21: marker bump only. V18 and V21 are both selection-authoritative;
 # the V19 model->provider localStorage map was a regression and is reverted.
 CENTRAL_DIFF_V18_TO_V20 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV18 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 """
@@ -1309,12 +1313,12 @@ CENTRAL_DIFF_V18_TO_V20 = r"""@@ provider marker
 PICKER_DIFF_V18_TO_V20 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV18 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 """
 
-# V19 to V20: revert the model->provider localStorage map and the provider-sync
+# V19 to V21: revert the model->provider localStorage map and the provider-sync
 # effect. The map mirrored the default provider and took precedence over the
 # live provider selection in request routing, so every duplicate-model request
 # (gpt-5.6-luna is exposed by both a6api and TongApi) routed to the default.
@@ -1324,7 +1328,7 @@ PICKER_DIFF_V18_TO_V20 = r"""@@ picker marker
 CENTRAL_DIFF_V19_TO_V20 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV19 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 @@ provider selection
@@ -1342,7 +1346,7 @@ CENTRAL_DIFF_V19_TO_V20 = r"""@@ provider marker
 PICKER_DIFF_V19_TO_V20 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV19 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 @@ duplicate model label resolution
@@ -1393,12 +1397,31 @@ PICKER_DIFF_V19_TO_V20 = r"""@@ picker marker
      if (o != null && s != null && !l.some((e) => e.model === s) && l[0] != null)
 """
 
-# V16 to V20: refresh patch state after switching new threads to the selected
+CENTRAL_DIFF_V20_TO_V21 = r"""@@ provider marker
+ function codexProviderRoutingStateV4() {
+-  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
+    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  });
+"""
+
+PICKER_DIFF_V20_TO_V21 = r"""@@ picker marker
+ function codexPickerProviderRoutingStateV4() {
+-  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
+    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
+  });
+@@ composer footer label
+-function $X(e){let t=(0,Ics.c)(14),{model:n,displayName:r,labelClassName:i,serviceTierIconKind:a,stripGptPrefix:o}=e,s=a===void 0?null:a,c=o===void 0?!1:o,l;if(r!=null){let e;if(t[0]!==r||t[1]!==c){let n=GX(r);e=c?n.replace(/^GPT-/iu,``):n,t[0]=r,t[1]=c,t[2]=e}else e=t[2];l=e}else if(n){l=(0,Lcs.jsx)(CodexProviderModelLabelV4,{value:n,fallback:n})}else l=n;let u;
++function $X(e){let t=(0,Ics.c)(14),{model:n,displayName:r,labelClassName:i,serviceTierIconKind:a,stripGptPrefix:o}=e,s=a===void 0?null:a,c=o===void 0?!1:o,l;if(n){l=(0,Lcs.jsx)(CodexProviderModelLabelV4,{value:n,fallback:r??n})}else if(r!=null){let e;if(t[0]!==r||t[1]!==c){let n=GX(r);e=c?n.replace(/^GPT-/iu,``):n,t[0]=r,t[1]=c,t[2]=e}else e=t[2];l=e}else l=n;let u;
+"""
+
+# V16 to V21: refresh patch state after switching new threads to the selected
 # provider route while hiding provider filters from thread listing.
 CENTRAL_DIFF_V16_TO_V17 = r"""@@ provider marker
  function codexProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 """
@@ -1406,7 +1429,7 @@ CENTRAL_DIFF_V16_TO_V17 = r"""@@ provider marker
 PICKER_DIFF_V16_TO_V17 = r"""@@ picker marker
  function codexPickerProviderRoutingStateV4() {
 -  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-+  return (window.__codexDesktopModelProvidersPatchV20 ??= {
++  return (window.__codexDesktopModelProvidersPatchV21 ??= {
      config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
    });
 """
@@ -1454,6 +1477,7 @@ PICKER_DIFF_V15_TO_V16 = r"""@@ picker marker
 
 
 PATCH_VARIANTS: tuple[tuple[str, str, str], ...] = (
+    ("ChatGPT 26.721 V20 footer label fix upgrade", CENTRAL_DIFF_V20_TO_V21, PICKER_DIFF_V20_TO_V21),
     ("ChatGPT 26.721 V19 map-revert upgrade", CENTRAL_DIFF_V19_TO_V20, PICKER_DIFF_V19_TO_V20),
     ("ChatGPT 26.721 V18 marker bump upgrade", CENTRAL_DIFF_V18_TO_V20, PICKER_DIFF_V18_TO_V20),
     ("ChatGPT 26.721 V16 umbrella provider upgrade", CENTRAL_DIFF_V16_TO_V17, PICKER_DIFF_V16_TO_V17),
@@ -2403,8 +2427,10 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
             source = _replace_once(
                 source,
                 CODEX_26721_5848_COMPOSER_LABEL_ANCHOR,
-                "else if(n){l=(0,Lcs.jsx)"
-                "(CodexProviderModelLabelV4,{value:n,fallback:n})}else l=n",
+                "if(n){l=(0,Lcs.jsx)(CodexProviderModelLabelV4,{value:n,"
+                "fallback:r??n})}else if(r!=null){let e;if(t[0]!==r||t[1]!==c)"
+                "{let n=GX(r);e=c?n.replace(/^GPT-/iu,``):n,t[0]=r,t[1]=c,"
+                "t[2]=e}else e=t[2];l=e}else l=n;let u;",
                 CODEX_26721_5848_LAYOUT,
             )
             compatible.append((CODEX_26721_5848_LAYOUT, {central: source}))

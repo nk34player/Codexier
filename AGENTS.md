@@ -62,8 +62,8 @@ The patch currently supports two known ChatGPT desktop layouts:
 - The merged `app-initial` layout uses the `CODEX_26721_4979_*` and
   `CODEX_26721_5848_*` anchors plus generated V7 diffs.
 
-The current patch marker is V20:
-`__codexDesktopModelProvidersPatchV20`. Any JavaScript behavior change must
+The current patch marker is V21:
+`__codexDesktopModelProvidersPatchV21`. Any JavaScript behavior change must
 bump the marker and add/adjust upgrade coverage so an older installed patch is
 replaced safely.
 
@@ -109,7 +109,7 @@ provider. Future fixes must verify both the visible identity and the outgoing
 - The authoritative config is read from
   `desktop-model-providers.json` under the Codex home directory.
 
-The current V20 routing code chooses the selected provider when that provider
+The current V21 routing code chooses the selected provider when that provider
 contains the requested model, otherwise it falls back to the sole provider
 that contains that model. If the selected provider is absent, stale, or not
 matched to the model, routing can fall through to the configured default.
@@ -118,7 +118,7 @@ state, model entry `providerId`, prewarm payload, then final `thread/start`
 payload.
 
 Inspection of the installed ChatGPT app confirmed that the patched
-`app-initial-*.js` bundle contains the same V20 selection-authoritative logic.
+`app-initial-*.js` bundle contains the same V21 selection-authoritative logic.
 The model menu calls the generic `onSelectModel` callback with only `model`
 and reasoning effort; it does not pass `providerId`. Therefore routing must be
 driven by the selected provider (`codex.customProviderSelection.v2`) and the
@@ -131,10 +131,18 @@ The installed bundle also confirmed that the normal `sendRequest` path and
 `prewarmThreadStart` both pass through `codexPatchAppServerParams`; future
 routing debugging must inspect both paths before changing the request seam.
 
+V21 fixes the remaining composer footer label issue in the 26.721.5848 merged
+bundle. The minified `$X(...)` footer component used `displayName` before
+`model`, so a stale `displayName` such as `5.6 Luna (a6api)` prevented the
+provider-aware `CodexProviderModelLabelV4` lookup from running after TongApi
+was selected. Keep `$X(...)` model-first:
+`CodexProviderModelLabelV4({ value: model, fallback: displayName ?? model })`.
+Do not revert it to displayName-first.
+
 Important upgrade finding: changing only the source marker does not upgrade an
-already-patched bundle. V20 includes dedicated V18-to-V20 and V19-to-V20
-upgrade variants; without them, the installer rejects the installed bundle and
-the old frontend/backend bugs remain active.
+already-patched bundle. V21 includes dedicated V18/V19-to-current and
+V20-to-V21 upgrade variants; without them, the installer rejects the installed
+bundle and the old frontend/backend bugs remain active.
 The temporary extraction used for this inspection is `.codexier-app-inspect/`;
 it is disposable and must never be committed.
 
@@ -143,7 +151,7 @@ it is disposable and must never be committed.
 Observed symptom: choosing `5.6 Luna (a6api)` can still produce a TongApi
 request, while choosing `5.6 Luna (TongApi)` can still leave the composer
 footer showing `5.6 Luna (a6api)`. This represents two independent bugs. The
-frontend and backend fixes are now in the V20 embedded patch:
+frontend and backend fixes are now in the V21 embedded patch:
 
 1. **Backend/request bug:** the actual `thread/start` or prewarm request has
    the wrong `modelProvider` (often the default).
