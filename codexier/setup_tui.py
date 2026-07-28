@@ -963,7 +963,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
                 ListItem(
                     Label(
                         f"●  {backup.target.platform.upper()} · {backup.kind}: {state}\n"
-                        f"   [dim]{backup.path} · {backup.size_bytes:,} bytes · {stamp}[/dim]"
+                        f"   [dim]{backup.path} · {backup.size_bytes:,} bytes · Backup made {stamp}[/dim]"
                     ),
                     id=f"backup-{index}",
                 )
@@ -992,7 +992,7 @@ class BackupManagerScreen(_ProviderManagerShortcutIsolation, Screen[bool | None]
             f"Type       {backup.kind}\n"
             f"Archive    {backup.archive_path}\n"
             f"Size       {backup.size_bytes:,} bytes\n"
-            f"Modified   {backup.modified_at:%Y-%m-%d %H:%M UTC}\n"
+            f"Backup made {backup.modified_at:%Y-%m-%d %H:%M UTC}\n"
             f"Status     {backup.message}\n"
             f"Restore to {backup.target.archive_path}"
         )
