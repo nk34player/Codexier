@@ -88,7 +88,7 @@ class ProviderListView(ListView):
             super().__init__()
 
     BINDINGS = [
-        Binding("enter", "select_cursor", "Use provider"),
+        Binding("enter", "select_cursor", "Apply provider"),
     ]
     _last_click_item: ListItem | None = None
     _last_click_at = 0.0
@@ -454,7 +454,14 @@ class ProviderManagerApp(App[Provider | None]):
             self.exit(provider)
             return
         self.push_screen(
-            ApplyScreen(provider, self.settings_for(provider), self.target_path),
+            ApplyScreen(
+                provider,
+                self.settings_for(provider),
+                self.target_path,
+                enabled_providers=tuple(
+                    item for item in self.providers if item.enabled
+                ),
+            ),
             self._apply_finished,
         )
 
@@ -2255,11 +2262,19 @@ class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
         *_HIDDEN_PROVIDER_MANAGER_BINDINGS,
     ]
 
-    def __init__(self, provider: Provider, settings: CodexSettings, target_path):
+    def __init__(
+        self,
+        provider: Provider,
+        settings: CodexSettings,
+        target_path,
+        *,
+        enabled_providers: tuple[Provider, ...] = (),
+    ):
         super().__init__()
         self.provider = provider
         self.settings = settings
         self.target_path = target_path
+        self.enabled_providers = enabled_providers
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
@@ -2274,6 +2289,7 @@ class ApplyScreen(_ProviderManagerShortcutIsolation, Screen[bool]):
                 f"Base URL  {self.settings.base_url}\n"
                 f"API key   {mask_api_key(self.settings.api_key)}\n"
                 f"Fallback models    {', '.join(self.settings.models)}\n"
+                f"Enabled providers  {', '.join(provider.name for provider in self.enabled_providers)}\n"
                 "Sync scope        Enabled providers and their selected models\n"
                 f"Target    {self.target_path}", id="summary"
             )
