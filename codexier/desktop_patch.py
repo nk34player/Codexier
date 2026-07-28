@@ -416,7 +416,7 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
                 )
             )
             continue
-        created_at = _backup_created_at(path)
+        created_at = _backup_created_at(archive)
         if path.name.startswith("automatic-"):
             kind = "Automatic snapshot"
         entries.append(
@@ -435,10 +435,10 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
 
 
 def _backup_created_at(path: Path) -> datetime:
-    """Use creation time; archive mtime is inherited from the source app."""
+    """Use the OS creation timestamp, never the archive modification time."""
     stat = path.stat()
     return datetime.fromtimestamp(
-        getattr(stat, "st_birthtime", stat.st_mtime), timezone.utc
+        getattr(stat, "st_birthtime", stat.st_ctime), timezone.utc
     )
 
 
