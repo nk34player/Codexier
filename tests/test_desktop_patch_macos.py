@@ -250,6 +250,9 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
     patched = bundle.read_text(encoding="utf-8")
     assert "__codexDesktopModelProvidersPatchV7" in patched
     assert "CodexCustomProviderPickerSection" in patched
+    assert "if (e.providers.length < 2) return null;" in patched
+    assert "name: t.label" in patched
+    assert "label: t.label" in patched
     assert "}=e;p=codexUseProviderModels(p);let P=m" in patched
     assert "o=codexPickerModelLabelV4(n,jol(n,a))" in patched
     assert "l=codexPickerModelLabelV4(r,jol(r,c))" in patched
@@ -303,6 +306,9 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     patched = archive.read_text(encoding="utf-8")
     assert "__codexDesktopModelProvidersPatchV7" in patched
     assert "CodexCustomProviderPickerSection" in patched
+    assert "if (e.providers.length < 2) return null;" in patched
+    assert "name: t.label" in patched
+    assert "label: t.label" in patched
     assert archive.with_name("app.asar.bak").read_bytes() == b"original"
 
 

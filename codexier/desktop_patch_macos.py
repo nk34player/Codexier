@@ -1035,7 +1035,12 @@ function codexUseProviderModels(e) {
   let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
   if (o == null || !Array.isArray(e) || e.length === 0) return e;
   return o.models.map((t) => ({
-    ...e[0], model: t.id, displayName: `${t.label} (${o.label})`,
+    ...e[0],
+    id: t.id,
+    model: t.id,
+    name: t.label,
+    label: t.label,
+    displayName: `${t.label} (${o.label})`,
   }));
 }
 function CodexCustomProviderPickerSection() {
@@ -1047,6 +1052,7 @@ function CodexCustomProviderPickerSection() {
       (t(r), i(codexReadProviderChoiceV4(r)));
     });
   }, []);
+  if (e.providers.length < 2) return null;
   return (0, wQ.jsxs)(wQ.Fragment, {
     children: [
       (0, wQ.jsx)(yz.Title, { children: `Provider for new tasks` }),
@@ -2056,9 +2062,16 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
             source = _replace_once(
                 source,
                 "function dMs(e){",
-                CENTRAL_V7_JAVASCRIPT + "\n" + PICKER_V7_JAVASCRIPT.replace(
-                    "CodexProviderPatchReact", "TMs"
-                ) + "\nfunction dMs(e){",
+                CENTRAL_V7_JAVASCRIPT
+                + "\n"
+                + PICKER_V7_JAVASCRIPT
+                + "\nfunction dMs(e){",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "var TMs,wQ,EMs=e((()=>{TMs=c(),",
+                "var TMs,wQ,CodexProviderPatchReact,EMs=e((()=>{TMs=c(),CodexProviderPatchReact=r(o(),1),",
                 CODEX_26721_5848_LAYOUT,
             )
             source = _replace_once(
