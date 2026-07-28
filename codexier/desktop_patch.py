@@ -24,7 +24,7 @@ from .errors import ConfigError
 from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV7"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV8"
 PATCH_MARKER_PREFIX = b"__codexDesktopModelProvidersPatch"
 
 
@@ -256,6 +256,13 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
         return DesktopPatchStatus(target, False, False, f"Cannot read app archive: {exc}.")
     if PATCH_MARKER in content:
         return DesktopPatchStatus(target, True, True, "Codexier desktop patch is installed.")
+    if PATCH_MARKER_PREFIX in content:
+        return DesktopPatchStatus(
+            target,
+            True,
+            True,
+            "An older Codexier desktop patch will be upgraded on the next sync.",
+        )
     if target.platform == "darwin":
         return DesktopPatchStatus(target, False, True, "macOS app is ready for source validation.")
     return DesktopPatchStatus(

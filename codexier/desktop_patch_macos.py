@@ -44,8 +44,9 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV7"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV8"
 LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV7",
     b"__codexDesktopModelProvidersPatchV2",
     b"__codexDesktopModelProvidersPatchV3",
     b"__codexDesktopModelProvidersPatchV4",
@@ -908,7 +909,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV7 ??= {
+  return (window.__codexDesktopModelProvidersPatchV8 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -979,7 +980,7 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV7 ??= {
+  return (window.__codexDesktopModelProvidersPatchV8 ??= {
     config: codexPickerProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -1147,7 +1148,7 @@ def _v7_upgrade_diffs(
 @@ provider marker
  function codexProviderRoutingStateV4() {{
 -  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
-+  return (window.__codexDesktopModelProvidersPatchV7 ??= {{
++  return (window.__codexDesktopModelProvidersPatchV8 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
    }});
 """

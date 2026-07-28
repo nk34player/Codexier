@@ -158,7 +158,7 @@ function codexUseProviderModels(e) {
     upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V6_TO_V7, "picker.js")
     upgraded = (upgraded_central + upgraded_picker).casefold()
 
-    assert "__codexdesktopmodelproviderspatchv7" in upgraded
+    assert "__codexdesktopmodelproviderspatchv8" in upgraded
     assert "chatgpt / openai" not in upgraded
     assert "defaultprovider: `openai`" not in upgraded
     assert "id === `openai`" not in upgraded
@@ -248,7 +248,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV7" in patched
+    assert "__codexDesktopModelProvidersPatchV8" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2) return null;" in patched
     assert "name: t.label" in patched
@@ -304,7 +304,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV7" in patched
+    assert "__codexDesktopModelProvidersPatchV8" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2) return null;" in patched
     assert "name: t.label" in patched

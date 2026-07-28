@@ -374,11 +374,15 @@ def apply_codex_profiles(
     settings: dict[str, Any] | None = None,
 ) -> CodexProfileResult:
     """Install one normal profile and desktop routes for enabled providers."""
-    enabled_providers = tuple(provider for provider in providers if provider.enabled)
+    # The selected fallback is always part of the applied catalog. This also
+    # repairs older catalogs where the default was accidentally toggled off.
+    enabled_providers = tuple(
+        provider
+        for provider in providers
+        if provider.enabled or provider.id == selected_provider.id
+    )
     if not enabled_providers:
         raise ConfigError("Enable at least one provider before applying.")
-    if selected_provider.id not in {provider.id for provider in enabled_providers}:
-        raise ConfigError("The selected default provider must be enabled.")
     if any(not provider.models for provider in enabled_providers):
         raise ConfigError("Every enabled provider must contain at least one selected model.")
     root = codex_home(home)

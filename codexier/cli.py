@@ -88,27 +88,9 @@ def _apply_post_sync_desktop_patch() -> None:
 
 
 def _manage_macos_desktop_app(*, install_patch: bool) -> None:
-    """Let macOS users keep the signed app normal or install/restore the picker patch."""
-    target = default_target()
-    backup_root = Path.home() / ".codex" / "codexier-desktop-backups"
-    status = patch_status(target)
-    if status.patched:
-        if _confirm("Use the official app normally and restore its original backup?"):
-            from .desktop_patch_macos import latest_original_backup
-
-            try:
-                restore_desktop_patch(
-                    target, latest_original_backup(target.archive_path.parents[2], backup_root)
-                )
-                print("Official desktop app restored. Codex configuration and sessions were unchanged.")
-            except (ConfigError, OSError) as exc:
-                print(f"Could not restore the official desktop app: {exc}")
-        else:
-            print("Keeping the provider-first desktop patch.")
-    elif install_patch or _confirm("Install the provider-first desktop picker?"):
+    """Apply only an explicitly requested desktop patch; never prompt here."""
+    if install_patch or patch_status(default_target()).patched:
         _apply_post_sync_desktop_patch()
-    else:
-        print("Official desktop app left unmodified.")
 
 
 def _confirm(prompt: str) -> bool:
@@ -170,6 +152,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if provider is None:
                 return 0
+            # The TUI commits session-only provider toggles when Apply is
+            # confirmed. Reload them before building the actual Codex profile.
+            providers = ProviderStore(catalog_path).load()
+            provider = next(
+                (item for item in providers if item.id == provider.id),
+                provider,
+            )
             settings = CodexSettings(
                 provider.base_url,
                 provider.api_key,
@@ -222,13 +211,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     print("Restart Codex manually to apply CLI configuration changes.")
             else:
-                should_restart = args.restart
-                if not args.no_restart and not args.restart and not args.yes:
-                    should_restart = _confirm("Restart Codex now?")
+                should_restart = not args.no_restart
                 if should_restart:
                     print(restart_codex(detect_codex_processes(), force=True).message)
-                else:
-                    print("Restart skipped; restart Codex manually to apply changes.")
 
             # Keep session alive after apply. User exits from provider manager.
             continue

@@ -4,6 +4,7 @@ import asyncio
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from textual import events, on
@@ -34,7 +35,7 @@ from .model_client import ModelFetchError, fetch_models
 from .models import ModelDefinition, Provider
 from .desktop_patch_macos import PatchError
 from .errors import CatalogError, ConfigError, ValidationError
-from .provider_store import add_provider, delete_provider, set_provider_enabled, update_provider
+from .provider_store import add_provider, delete_provider, update_provider
 from .setup import normalize_base_url, provider_from_live_models
 from .tui import widget_id
 from .models import CodexSettings, mask_api_key
@@ -292,6 +293,7 @@ class ProviderManagerApp(App[Provider | None]):
         yield Footer()
 
     async def on_mount(self) -> None:
+        self._repair_default_provider()
         await self._render_providers()
         view = self.query_one("#providers", ListView)
         view.focus()
@@ -399,22 +401,35 @@ class ProviderManagerApp(App[Provider | None]):
         provider = self._selected()
         if provider is None:
             return
-        try:
-            updated = set_provider_enabled(
-                self.catalog_path, provider.id, not provider.enabled
+        if provider.id == self.applied_id and provider.enabled:
+            replacement = next(
+                (item for item in self.providers if item.id != provider.id and item.enabled),
+                None,
             )
-        except CatalogError as exc:
-            status = self.query_one("#status", Static)
-            status.update(str(exc))
-            status.add_class("error")
-            return
+            if replacement is None:
+                self.query_one("#status", Static).update(
+                    "The default provider must remain enabled until another provider is enabled."
+                )
+                return
+            self.applied_id = replacement.id
+        updated = replace(provider, enabled=not provider.enabled)
         self.providers = tuple(
             updated if item.id == updated.id else item for item in self.providers
         )
         self.run_worker(self._render_providers(), exclusive=True)
         state = "enabled" if updated.enabled else "disabled"
         self.query_one("#status", Static).update(
-            f"{updated.name} is {state}. Sync exports enabled providers only."
+            f"{updated.name} is {state} for this session. Apply provider to save and sync."
+        )
+
+    def _repair_default_provider(self) -> None:
+        if self.applied_id and any(
+            item.id == self.applied_id and item.enabled for item in self.providers
+        ):
+            return
+        self.applied_id = next(
+            (item.id for item in self.providers if item.enabled),
+            self.providers[0].id if self.providers else None,
         )
 
     def action_use(self) -> None:
@@ -481,6 +496,8 @@ class ProviderManagerApp(App[Provider | None]):
 
     def _apply_finished(self, applied: bool | None) -> None:
         if applied:
+            for provider in self.providers:
+                update_provider(self.catalog_path, provider)
             provider = self._selected()
             if provider:
                 self.exit(provider)
