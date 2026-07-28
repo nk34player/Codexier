@@ -57,7 +57,11 @@ def detect_codex_processes() -> tuple[CodexProcess, ...]:
             continue
         username, pid_text, command = parts
         argv = tuple(command.split())
-        if username != current_user or not any("codex" in part.lower() for part in argv):
+        if (
+            username != current_user
+            or not argv
+            or os.path.basename(argv[0]).casefold() not in {"codex", "codex.exe"}
+        ):
             continue
         try:
             pid = int(pid_text)
@@ -160,7 +164,7 @@ def gracefully_close_chatgpt_processes(
     terminate: Callable[[int], object] | None = None,
     poll: Callable[[int], bool] | None = None,
 ) -> CloseResult:
-    """Close desktop processes, including apps left alive in the notification area."""
+    """Request a normal close without ever force-terminating desktop processes."""
     if not processes:
         return CloseResult(True, "No current-user Codex desktop process is running.")
 
@@ -190,41 +194,24 @@ def gracefully_close_chatgpt_processes(
         )
         return str(pid) in result.stdout
 
-    def force_terminate(pid: int) -> object:
-        return subprocess.run(
-            ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
     close = request_close or close_window
-    kill = terminate or force_terminate
     check_running = poll or is_running
     try:
         for process in processes:
             close(process.pid)
-        deadline = time.monotonic() + min(timeout_seconds, 2.0)
+        deadline = time.monotonic() + timeout_seconds
         pending = {process.pid for process in processes}
         while pending and time.monotonic() < deadline:
             pending = {pid for pid in pending if check_running(pid)}
             if pending:
                 time.sleep(0.1)
-        if pending:
-            for pid in pending:
-                kill(pid)
-            deadline = time.monotonic() + timeout_seconds
-            while pending and time.monotonic() < deadline:
-                pending = {pid for pid in pending if check_running(pid)}
-                if pending:
-                    time.sleep(0.1)
     except OSError as exc:
         return CloseResult(False, f"Could not fully close Codex: {exc}")
     if pending:
         ids = ", ".join(str(pid) for pid in sorted(pending))
         return CloseResult(
             False,
-            f"Codex is still running (PIDs: {ids}) after a forced shutdown.",
+            f"Codex is still running (PIDs: {ids}). Close it manually, then try again.",
         )
     return CloseResult(True, "Codex desktop app fully closed.")
 

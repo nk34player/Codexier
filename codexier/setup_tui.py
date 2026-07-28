@@ -353,13 +353,12 @@ class ProviderManagerApp(App[Provider | None]):
             # ListView can emit Highlighted while screens are mounting or
             # being dismissed. Ignore transient events until status exists.
             return
-        if provider is None:
-            status.update("Toggle providers on, then choose an enabled provider as the default.")
-        elif not provider.enabled:
-            status.update(f"{provider.name} is disabled. Toggle it on before syncing.")
+        default = self._default_enabled_provider()
+        if default is None:
+            status.update("Enable at least one provider before syncing.")
         else:
             status.update(
-                f"Codexier fallback after sync: {provider.name} · {len(provider.models)} models · "
+                f"Codexier fallback after sync: {default.name} · {len(default.models)} models · "
                 f"{sum(item.enabled for item in self.providers)} providers enabled"
             )
 
@@ -395,6 +394,7 @@ class ProviderManagerApp(App[Provider | None]):
             status.add_class("error")
             return
         self.providers = tuple(item for item in self.providers if item.id != provider.id)
+        self._repair_default_provider()
         self.run_worker(self._render_providers(), exclusive=True)
 
     def action_toggle_enabled(self) -> None:
@@ -416,6 +416,7 @@ class ProviderManagerApp(App[Provider | None]):
         self.providers = tuple(
             updated if item.id == updated.id else item for item in self.providers
         )
+        self._repair_default_provider()
         self.run_worker(self._render_providers(), exclusive=True)
         state = "enabled" if updated.enabled else "disabled"
         self.query_one("#status", Static).update(
@@ -423,25 +424,25 @@ class ProviderManagerApp(App[Provider | None]):
         )
 
     def _repair_default_provider(self) -> None:
-        if self.applied_id and any(
-            item.id == self.applied_id and item.enabled for item in self.providers
-        ):
-            return
-        self.applied_id = next(
-            (item.id for item in self.providers if item.enabled),
-            self.providers[0].id if self.providers else None,
+        default = self._default_enabled_provider()
+        self.applied_id = default.id if default else None
+
+    def _default_enabled_provider(self) -> Provider | None:
+        current = next(
+            (
+                item
+                for item in self.providers
+                if item.id == self.applied_id and item.enabled
+            ),
+            None,
+        )
+        return current or next(
+            (item for item in self.providers if item.enabled), None
         )
 
     def action_use(self) -> None:
-        provider = self._selected()
+        provider = self._default_enabled_provider()
         if provider is None:
-            return
-        if not provider.enabled:
-            status = self.query_one("#status", Static)
-            status.update(f"{provider.name} is disabled. Toggle it on before syncing.")
-            status.add_class("error")
-            return
-        if not any(item.enabled for item in self.providers):
             status = self.query_one("#status", Static)
             status.update("Enable at least one provider before syncing.")
             status.add_class("error")
@@ -498,7 +499,7 @@ class ProviderManagerApp(App[Provider | None]):
         if applied:
             for provider in self.providers:
                 update_provider(self.catalog_path, provider)
-            provider = self._selected()
+            provider = self._default_enabled_provider()
             if provider:
                 self.exit(provider)
 
@@ -1766,10 +1767,10 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
             except PatchError:
                 processes = []
             if processes:
-                self.app.push_screen(
-                    ForceCloseConfirmScreen(tuple(pid for pid, _ in processes)),
-                    lambda confirmed: self._force_close_confirmed(confirmed),
+                status.update(
+                    "ChatGPT is running. Close it manually before applying patches."
                 )
+                status.add_class("error")
                 return
         self.progress_screen = WindowsProgressScreen(self._action_title(action))
         await self.app.push_screen(self.progress_screen)
@@ -1851,32 +1852,9 @@ class WindowsDesktopScreen(_ProviderManagerShortcutIsolation, Screen[bool | None
         await self._load_status()
         self.progress_screen.finish("Completed. Review the detailed log, then close.")
 
-    def _force_close_confirmed(self, confirmed: bool | None) -> None:
-        if confirmed:
-            self.run_worker(self._run_action_with_force_close(), exclusive=True)
-
     def _reapply_confirmed(self, confirmed: bool | None) -> None:
         if confirmed:
             self.run_worker(self._run_action("macos-apply-patches", True), exclusive=True)
-
-    async def _run_action_with_force_close(self) -> None:
-        self.progress_screen = WindowsProgressScreen(self._action_title("macos-apply-patches"))
-        await self.app.push_screen(self.progress_screen)
-        try:
-            from .desktop_patch import apply_desktop_patch, default_target
-
-            await asyncio.to_thread(
-                apply_desktop_patch,
-                default_target(),
-                Path.home() / ".codex" / "codexier-desktop-backups",
-                self._progress,
-                True,
-            )
-            self.progress_screen.finish("Completed. Review the detailed log, then close.")
-        except (ConfigError, PatchError, OSError) as exc:
-            self.query_one("#windows-status", Static).update(str(exc))
-            self.query_one("#windows-status", Static).add_class("error")
-            self.progress_screen.finish(str(exc), error=True)
 
     async def _toggle_portable_shortcut(self) -> None:
         status = self.query_one("#windows-status", Static)

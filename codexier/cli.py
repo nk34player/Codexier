@@ -88,9 +88,16 @@ def _apply_post_sync_desktop_patch() -> None:
 
 
 def _manage_macos_desktop_app(*, install_patch: bool) -> None:
-    """Apply only an explicitly requested desktop patch; never prompt here."""
-    if install_patch or patch_status(default_target()).patched:
+    """Install only when requested; never close a running desktop app automatically."""
+    target = default_target()
+    status = patch_status(target)
+    if install_patch:
         _apply_post_sync_desktop_patch()
+    elif status.upgrade_required:
+        print(
+            "Desktop patch update available. Close ChatGPT, then rerun with "
+            "--patch-desktop."
+        )
 
 
 def _confirm(prompt: str) -> bool:
@@ -187,6 +194,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 print(f"Codex profile installed: {result.config_path}")
                 print(f"Model catalog installed: {result.catalog_path}")
+                if result.desktop_config_path:
+                    print(
+                        "Desktop provider configuration installed: "
+                        f"{result.desktop_config_path}"
+                    )
                 if args.print_command or sys.platform.startswith("linux"):
                     print("Run: " + " ".join(launch_command()))
                 if sys.platform == "darwin":

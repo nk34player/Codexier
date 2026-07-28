@@ -44,8 +44,13 @@ except ImportError:  # Windows imports the shared source-validation helpers.
     pwd = None
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV8"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV13"
 LEGACY_PATCH_MARKERS = (
+    b"__codexDesktopModelProvidersPatchV12",
+    b"__codexDesktopModelProvidersPatchV11",
+    b"__codexDesktopModelProvidersPatchV10",
+    b"__codexDesktopModelProvidersPatchV9",
+    b"__codexDesktopModelProvidersPatchV8",
     b"__codexDesktopModelProvidersPatchV7",
     b"__codexDesktopModelProvidersPatchV2",
     b"__codexDesktopModelProvidersPatchV3",
@@ -909,7 +914,7 @@ function codexNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV8 ??= {
+  return (window.__codexDesktopModelProvidersPatchV13 ??= {
     config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
   });
 }
@@ -949,6 +954,13 @@ PICKER_V7_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
     providers: [],
   };
 }
+function codexPickerCachedProviderRoutingConfigV4() {
+  try {
+    let e = JSON.parse(window.localStorage.getItem(`codex.customProviderRouting.v4`));
+    if (e != null && e.version === 2 && Array.isArray(e.providers)) return e;
+  } catch {}
+  return codexPickerProviderRoutingFallbackV4();
+}
 function codexPickerNormalizeProviderRoutingConfigV4(e) {
   if (e == null || typeof e !== `object` || Array.isArray(e))
     throw Error(`Expected a JSON object`);
@@ -980,8 +992,8 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
   return { version: 2, defaultProvider: r, providers: t };
 }
 function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV8 ??= {
-    config: codexPickerProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
+  return (window.__codexDesktopModelProvidersPatchV13 ??= {
+    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
   });
 }
 async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
@@ -995,9 +1007,10 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         r = `${e.replace(/[\\/]+$/u, ``)}${n}desktop-model-providers.json`,
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
+      try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
       return ((t.config = a), (t.error = null), (t.loaded = !0), a);
     } catch (e) {
-      return ((t.config = codexPickerProviderRoutingFallbackV4()), (t.error = e instanceof Error ? e.message : String(e)), (t.loaded = !0), t.config);
+      return ((t.error = e instanceof Error ? e.message : String(e)), (t.loaded = !0), t.config);
     } finally {
       t.promise = null;
     }
@@ -1012,6 +1025,7 @@ function codexReadProviderChoiceV4(e) {
 }
 function codexWriteProviderChoiceV4(e) {
   try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
+  window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
 }
 function codexPickerModelLabelV4(e, t) {
   let n = codexPickerProviderRoutingStateV4().config,
@@ -1023,7 +1037,7 @@ function codexPickerModelLabelV4(e, t) {
   }
   return t;
 }
-function codexUseProviderModels(e) {
+function codexUseProviderModels(e, s, c) {
   let r = codexPickerProviderRoutingStateV4(),
     [t, n] = CodexProviderPatchReact.useState(r.config),
     [i, a] = CodexProviderPatchReact.useState(() => codexReadProviderChoiceV4(r.config));
@@ -1033,35 +1047,60 @@ function codexUseProviderModels(e) {
       e && (n(t), a(codexReadProviderChoiceV4(t)));
     }), () => { e = !1; });
   }, []);
+  CodexProviderPatchReact.useEffect(() => {
+    let e = () => a(codexReadProviderChoiceV4(codexPickerProviderRoutingStateV4().config));
+    return (window.addEventListener(`codex.customProviderSelection.v2.change`, e), () => {
+      window.removeEventListener(`codex.customProviderSelection.v2.change`, e);
+    });
+  }, []);
   let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
-  if (o == null || !Array.isArray(e) || e.length === 0) return e;
-  return o.models.map((t) => ({
-    ...e[0],
-    id: t.id,
-    model: t.id,
-    name: t.label,
-    label: t.label,
-    displayName: `${t.label} (${o.label})`,
-  }));
+  let l = o == null || !Array.isArray(e) || e.length === 0 ? e : o.models.map((t) => ({
+      ...e[0],
+      id: t.id,
+      model: t.id,
+      name: t.label,
+      label: t.label,
+      displayName: `${t.label} (${o.label})`,
+    }));
+  CodexProviderPatchReact.useEffect(() => {
+    if (o != null && s != null && !l.some((e) => e.model === s) && l[0] != null)
+      c?.(l[0].model, l[0].defaultReasoningEffort);
+  }, [o, s, c, l]);
+  return l;
 }
 function CodexCustomProviderPickerSection() {
   let r = codexPickerProviderRoutingStateV4(),
     [e, t] = CodexProviderPatchReact.useState(r.config),
-    [n, i] = CodexProviderPatchReact.useState(() => codexReadProviderChoiceV4(r.config));
+    [n, i] = CodexProviderPatchReact.useState(() => codexReadProviderChoiceV4(r.config)),
+    [a, o] = CodexProviderPatchReact.useState(r.error);
   CodexProviderPatchReact.useEffect(() => {
     codexPickerLoadProviderRoutingConfigV4(!0).then((r) => {
-      (t(r), i(codexReadProviderChoiceV4(r)));
+      (t(r), i(codexReadProviderChoiceV4(r)), o(codexPickerProviderRoutingStateV4().error));
     });
   }, []);
-  if (e.providers.length < 2) return null;
+  CodexProviderPatchReact.useEffect(() => {
+    let e = () => i(codexReadProviderChoiceV4(codexPickerProviderRoutingStateV4().config));
+    return (window.addEventListener(`codex.customProviderSelection.v2.change`, e), () => {
+      window.removeEventListener(`codex.customProviderSelection.v2.change`, e);
+    });
+  }, []);
+  if (e.providers.length < 2 && a == null) return null;
   return (0, wQ.jsxs)(wQ.Fragment, {
     children: [
-      (0, wQ.jsx)(yz.Title, { children: `Provider for new tasks` }),
-      e.providers.map((e) => (0, wQ.jsx)(yz.Item, {
+      a == null ? null : (0, wQ.jsx)(yz.Item, {
+        disabled: !0,
+        SubText: (0, wQ.jsx)(`span`, {
+          className: `text-token-description-foreground`,
+          children: a,
+        }),
+        children: `Provider config error`,
+      }),
+      e.providers.length < 2 ? null : (0, wQ.jsx)(yz.Title, { children: `Provider for new tasks` }),
+      e.providers.length < 2 ? null : e.providers.map((e) => (0, wQ.jsx)(yz.Item, {
         RightIcon: n === e.id ? Ym : void 0,
         SubText: (0, wQ.jsx)(`span`, {
           className: `text-token-description-foreground`,
-          children: e.description || `Choose this provider, then choose one of its models`,
+          children: e.description || `Custom Provider`,
         }),
         onSelect: (r) => {
           (r?.preventDefault(), codexWriteProviderChoiceV4(e.id), i(e.id));
@@ -1100,6 +1139,25 @@ CODEX_26721_4979_MODEL_CHANGED_ANCHOR = (
     "let s=o,c=i?.models,l;t[3]!==c||t[4]!==r?(l=jol(r,c),t[3]=c,t[4]=r,"
     "t[5]=l):l=t[5];"
 )
+CODEX_26721_5848_MODEL_LABEL_ANCHOR = (
+    "function Uol(e,t){let n=GM(t,e)?.displayName;"
+    "return n!=null&&n.trim().length>0?GX(n):(0,P6.jsx)(Z,{"
+    "id:`composer.mode.local.model.custom`,defaultMessage:`Custom`,"
+    "description:`Custom model from config`})}"
+)
+CODEX_26721_5848_SUBMENU_ANCHOR = (
+    "function Scs(e){let t=(0,wcs.c)(12),{submenu:n}=e,r=n.ariaLabel,"
+    "i=n.contentClassName,a=n.disabled,o;t[0]===n.title?o=t[1]:"
+    "(o=n.title==null?null:(0,QX.jsx)(yz.Title,{children:n.title}),"
+    "t[0]=n.title,t[1]=o);let s=n.label,c=n.value,l;t[2]===n.options?"
+    "l=t[3]:(l=n.options.map(Ccs),t[2]=n.options,t[3]=l);let u;return "
+    "t[4]!==n.ariaLabel||t[5]!==n.contentClassName||t[6]!==n.disabled||"
+    "t[7]!==n.label||t[8]!==n.value||t[9]!==o||t[10]!==l?"
+    "(u=(0,QX.jsx)(Kos,{ariaLabel:r,contentClassName:i,disabled:a,"
+    "flyoutHeader:o,label:s,value:c,children:l}),t[4]=n.ariaLabel,"
+    "t[5]=n.contentClassName,t[6]=n.disabled,t[7]=n.label,t[8]=n.value,"
+    "t[9]=o,t[10]=l,t[11]=u):u=t[11],u}"
+)
 CODEX_26721_4979_REACT_ANCHOR = (
     "var pMs,TQ,mMs=e((()=>{pMs=c(),pd(),ad(),uls(),yss(),bss(),VAs(),Xm(),"
     "qX(),dD(),bz(),Hos(),Mcs(),ycs(),zos(),Zos(),Kos(),kcs(),TQ=J()})),"
@@ -1128,7 +1186,7 @@ PICKER_DIFF_26721_V7 = _insert_hunk_before(
     _append_insertion_diff(
         "",
         "      triggerButton: N,\n    } = e,\n    P = m === void 0 ? !1 : m,",
-        "    p = codexUseProviderModels(p),",
+        "    p = codexUseProviderModels(p, d, y),",
     ),
 )
 
@@ -1148,7 +1206,7 @@ def _v7_upgrade_diffs(
 @@ provider marker
  function codexProviderRoutingStateV4() {{
 -  return (window.__codexDesktopModelProvidersPatch{marker} ??= {{
-+  return (window.__codexDesktopModelProvidersPatchV8 ??= {{
++  return (window.__codexDesktopModelProvidersPatchV13 ??= {{
      config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
    }});
 """
@@ -2003,7 +2061,7 @@ def _apply_codex_26721_4979_layout(source: str) -> str:
         source,
         CODEX_26721_4979_MODELS_ANCHOR,
         CODEX_26721_4979_MODELS_ANCHOR.replace(
-            "}=e,P=m", "}=e;p=codexUseProviderModels(p);let P=m"
+            "}=e,P=m", "}=e;p=codexUseProviderModels(p,d,y);let P=m"
         ),
         layout,
     )
@@ -2077,14 +2135,72 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
             )
             source = _replace_once(
                 source,
+                CODEX_26721_5848_SUBMENU_ANCHOR,
+                CODEX_26721_5848_SUBMENU_ANCHOR
+                .replace("(12)", "(13)", 1)
+                .replace(
+                    "t[9]!==o||t[10]!==l?",
+                    "t[9]!==o||t[10]!==l||t[11]!==n.extras?",
+                    1,
+                )
+                .replace(
+                    "children:l}),",
+                    "children:n.extras==null?l:(0,QX.jsxs)"
+                    "(QX.Fragment,{children:[n.extras,l]})}),",
+                    1,
+                )
+                .replace(
+                    "t[9]=o,t[10]=l,t[11]=u):u=t[11]",
+                    "t[9]=o,t[10]=l,t[11]=n.extras,t[12]=u):u=t[12]",
+                    1,
+                ),
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
                 "let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
-                "p=codexUseProviderModels(p);let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
+                "p=codexUseProviderModels(p,d,y);let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "},model:{ariaLabel:U.formatMessage(",
+                "},model:{extras:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),"
+                "ariaLabel:U.formatMessage(",
                 CODEX_26721_5848_LAYOUT,
             )
             source = _replace_once(
                 source,
                 "children:[m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
-                "children:[(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
+                "children:[m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "contentClassName:`w-[280px]`,disabled:P||p==null,children:re",
+                "contentClassName:`w-[280px]`,disabled:P||p==null,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                "contentClassName:`w-[280px]`,disabled:fe,children:re",
+                "contentClassName:`w-[280px]`,disabled:fe,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re",
+                CODEX_26721_5848_LAYOUT,
+            )
+            source = _replace_once(
+                source,
+                CODEX_26721_5848_MODEL_LABEL_ANCHOR,
+                "function CodexProviderModelLabelV4(e){let[,t]="
+                "CodexProviderPatchReact.useState(0);"
+                "CodexProviderPatchReact.useEffect(()=>{let e=()=>t(e=>e+1);"
+                "return window.addEventListener(`codex.customProviderSelection.v2.change`,e),"
+                "()=>window.removeEventListener(`codex.customProviderSelection.v2.change`,e)},[]);"
+                "let n=codexPickerModelLabelV4(e.model,e.fallback);"
+                "return n!=null&&n.trim().length>0?GX(n):(0,P6.jsx)(Z,{"
+                "id:`composer.mode.local.model.custom`,defaultMessage:`Custom`,"
+                "description:`Custom model from config`})}"
+                "function Uol(e,t){return (0,P6.jsx)"
+                "(CodexProviderModelLabelV4,{model:e,fallback:GM(t,e)?.displayName})}",
                 CODEX_26721_5848_LAYOUT,
             )
             compatible.append((CODEX_26721_5848_LAYOUT, {central: source}))

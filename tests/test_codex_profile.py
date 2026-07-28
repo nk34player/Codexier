@@ -54,6 +54,7 @@ def test_desktop_picker_uses_the_exact_tui_provider_name():
         {
             "id": "codexier-private-eu",
             "label": "Private EU + Prod",
+            "description": "Custom Provider",
             "models": [{"id": "model-id", "label": "Model Label"}],
         }
     ]
@@ -197,6 +198,10 @@ def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: P
     }
     assert set(config["profiles"]) == {"codexier"}
     assert config["profiles"]["codexier"]["name"] == "Codexier"
+    assert all(
+        config["model_providers"][route]["name"] == "Codexier"
+        for route in ("codexier", "codexier-demo", "codexier-other")
+    )
     assert [model["slug"] for model in catalog["models"]] == [
         "gpt-5.2", "claude/opus 4.8", "other/model"
     ]

@@ -24,7 +24,7 @@ from .errors import ConfigError
 from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV8"
+PATCH_MARKER = b"__codexDesktopModelProvidersPatchV13"
 PATCH_MARKER_PREFIX = b"__codexDesktopModelProvidersPatch"
 
 
@@ -44,6 +44,7 @@ class DesktopPatchStatus:
     supported: bool
     message: str
     skipped: bool = False
+    upgrade_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -262,6 +263,7 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
             True,
             True,
             "An older Codexier desktop patch will be upgraded on the next sync.",
+            upgrade_required=True,
         )
     if target.platform == "darwin":
         return DesktopPatchStatus(target, False, True, "macOS app is ready for source validation.")
@@ -500,13 +502,12 @@ def apply_desktop_patch(
     target: DesktopPatchTarget,
     backup_root: Path,
     progress: PatchProgress | None = None,
-    force_close: bool = False,
 ) -> DesktopPatchStatus:
     """Patch a supported desktop archive without risking a successful sync.
 
     The caller receives safe skip statuses for signed packages, already-patched
-    installs, and apps that cannot close gracefully.  Expected patch failures
-    still raise ``ConfigError`` with the failed milestone for clear remediation.
+    installs, and running apps. Expected patch failures still raise
+    ``ConfigError`` with the failed milestone for clear remediation.
     """
     last_stage = "detection"
 
@@ -533,7 +534,6 @@ def apply_desktop_patch(
         from .desktop_patch_macos import (
             PatchSkipped,
             find_target_app_processes,
-            gracefully_close_target_app_processes,
             patch_app,
         )
 
@@ -545,12 +545,12 @@ def apply_desktop_patch(
             raise ConfigError("Apply a provider before installing the desktop patch.")
         try:
             report(emit, "validation", "validated the provider configuration and app archive")
-            was_running = bool(find_target_app_processes(app))
-            report(emit, "process stop", "requesting a graceful close of the desktop app")
-            if force_close:
-                gracefully_close_target_app_processes(app, force=True)
-            else:
-                gracefully_close_target_app_processes(app)
+            report(emit, "process stop", "checking that the desktop app is closed")
+            if find_target_app_processes(app):
+                raise PatchSkipped(
+                    "Desktop patch skipped: ChatGPT is running. Close it manually, "
+                    "then rerun with --patch-desktop."
+                )
             if progress is None:
                 patch_app(app, config, backup_root, False, emit)
             else:
@@ -558,55 +558,7 @@ def apply_desktop_patch(
                 # over it while the worker is running.
                 with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                     patch_app(app, config, backup_root, False, emit)
-            log_dir = config.parent / "codexier-logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_path = log_dir / (
-                f"chatgpt-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-            )
-            executable = app / "Contents" / "MacOS" / "ChatGPT"
-            codex = app / "Contents" / "Resources" / "codex"
-            if executable.is_file():
-                log_handle = log_path.open("ab")
-                try:
-                    launch_env = os.environ.copy()
-                    launch_env.update(
-                        {
-                            "ELECTRON_ENABLE_LOGGING": "1",
-                            "RUST_BACKTRACE": "1",
-                            "CODEXIER_CODEX_LOG_PATH": str(log_path),
-                        }
-                    )
-                    subprocess.Popen(
-                        [str(executable)],
-                        stdout=log_handle,
-                        stderr=subprocess.STDOUT,
-                        env=launch_env,
-                        start_new_session=True,
-                    )
-                except Exception:
-                    log_handle.close()
-                    raise
-                log_handle.close()
-                report(emit, "restart", f"started ChatGPT; runtime log: {log_path}")
-            else:
-                report(emit, "restart", f"ChatGPT executable not found; runtime log: {log_path}")
-            if codex.is_file():
-                with log_path.open("ab") as log_handle:
-                    log_handle.write(
-                        f"\n=== Codex executable diagnostic: {codex} ===\n".encode()
-                    )
-                    diagnostic = subprocess.run(
-                        [str(codex), "--version"],
-                        stdout=log_handle,
-                        stderr=subprocess.STDOUT,
-                        env={**os.environ, "RUST_BACKTRACE": "1"},
-                        timeout=15,
-                        check=False,
-                    )
-                    log_handle.write(
-                        f"=== Codex diagnostic exit code: {diagnostic.returncode} ===\n".encode()
-                    )
-                report(emit, "restart", f"logged Codex diagnostic: {log_path}")
+            _launch_macos_desktop_app(app, config.parent, emit)
         except PatchSkipped as exc:
             skipped = DesktopPatchStatus(target, False, True, str(exc), True)
             report(emit, "completion", skipped.message)
@@ -640,6 +592,54 @@ def apply_desktop_patch(
         report(emit, "completion", "desktop patch installed successfully")
         return final_status
     raise ConfigError(status.message)
+
+
+def _launch_macos_desktop_app(
+    app: Path,
+    codex_root: Path,
+    progress: PatchProgress | None = None,
+) -> Path:
+    log_dir = codex_root / "codexier-logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"chatgpt-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+    executable = app / "Contents" / "MacOS" / "ChatGPT"
+    codex = app / "Contents" / "Resources" / "codex"
+    if not executable.is_file():
+        report(progress, "restart", f"ChatGPT executable not found; runtime log: {log_path}")
+        return log_path
+    launch_env = os.environ.copy()
+    launch_env.update(
+        {
+            "ELECTRON_ENABLE_LOGGING": "1",
+            "RUST_BACKTRACE": "1",
+            "CODEXIER_CODEX_LOG_PATH": str(log_path),
+        }
+    )
+    with log_path.open("ab") as log_handle:
+        subprocess.Popen(
+            [str(executable)],
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            env=launch_env,
+            start_new_session=True,
+        )
+    report(progress, "restart", f"started ChatGPT; runtime log: {log_path}")
+    if codex.is_file():
+        with log_path.open("ab") as log_handle:
+            log_handle.write(f"\n=== Codex executable diagnostic: {codex} ===\n".encode())
+            diagnostic = subprocess.run(
+                [str(codex), "--version"],
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                env={**os.environ, "RUST_BACKTRACE": "1"},
+                timeout=15,
+                check=False,
+            )
+            log_handle.write(
+                f"=== Codex diagnostic exit code: {diagnostic.returncode} ===\n".encode()
+            )
+        report(progress, "restart", f"logged Codex diagnostic: {log_path}")
+    return log_path
 
 
 def restore_desktop_patch(

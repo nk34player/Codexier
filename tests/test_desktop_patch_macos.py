@@ -14,6 +14,9 @@ from codexier.desktop_patch_macos import (
     CODEX_26721_4979_PREWARM_ANCHOR,
     CODEX_26721_4979_REACT_ANCHOR,
     CODEX_26721_4979_REQUEST_ANCHOR,
+    CODEX_26721_5848_LAYOUT,
+    CODEX_26721_5848_MODEL_LABEL_ANCHOR,
+    CODEX_26721_5848_SUBMENU_ANCHOR,
     CENTRAL_DIFF,
     CENTRAL_DIFF_V6_TO_V7,
     CENTRAL_DIFF_26721_V7,
@@ -158,7 +161,7 @@ function codexUseProviderModels(e) {
     upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V6_TO_V7, "picker.js")
     upgraded = (upgraded_central + upgraded_picker).casefold()
 
-    assert "__codexdesktopmodelproviderspatchv8" in upgraded
+    assert "__codexdesktopmodelproviderspatchv13" in upgraded
     assert "chatgpt / openai" not in upgraded
     assert "defaultprovider: `openai`" not in upgraded
     assert "id === `openai`" not in upgraded
@@ -248,16 +251,57 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV8" in patched
+    assert "__codexDesktopModelProvidersPatchV13" in patched
     assert "CodexCustomProviderPickerSection" in patched
-    assert "if (e.providers.length < 2) return null;" in patched
+    assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
     assert "label: t.label" in patched
-    assert "}=e;p=codexUseProviderModels(p);let P=m" in patched
+    assert "}=e;p=codexUseProviderModels(p,d,y);let P=m" in patched
+    assert "codex.customProviderSelection.v2.change" in patched
+    assert "children: e.description || `Custom Provider`" in patched
+    assert "Provider config error" in patched
     assert "o=codexPickerModelLabelV4(n,jol(n,a))" in patched
     assert "l=codexPickerModelLabelV4(r,jol(r,c))" in patched
     assert "t=await codexPatchAppServerParams(e,t)" in patched
     assert "e=await codexPatchAppServerParams(`thread/start`,e)" in patched
+
+
+def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_path: Path):
+    bundle = tmp_path / "app-initial.js"
+    bundle.write_text(
+        "".join(
+            (
+                "async sendRequest(e,t,n){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);return e===`config/read`?this.sendConfigReadRequest(t,n):this.enqueueRequest(e,t,n)}",
+                "async prewarmThreadStart(e,t){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);let n=",
+                "function dMs(e){",
+                "var TMs,wQ,EMs=e((()=>{TMs=c(),",
+                CODEX_26721_5848_SUBMENU_ANCHOR,
+                "let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
+                "},model:{ariaLabel:U.formatMessage(",
+                "children:[m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
+                "contentClassName:`w-[280px]`,disabled:P||p==null,children:re",
+                "contentClassName:`w-[280px]`,disabled:fe,children:re",
+                CODEX_26721_5848_MODEL_LABEL_ANCHOR,
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_5848_LAYOUT
+    patched = bundle.read_text(encoding="utf-8")
+    assert "__codexDesktopModelProvidersPatchV13" in patched
+    assert "p=codexUseProviderModels(p,d,y);" in patched
+    assert "codex.customProviderSelection.v2.change" in patched
+    assert "codex.customProviderRouting.v4" in patched
+    assert "Provider config error" in patched
+    assert "t[11]!==n.extras" in patched
+    assert "children:[n.extras,l]" in patched
+    assert "model:{extras:(0,wQ.jsx)(CodexCustomProviderPickerSection,{})" in patched
+    assert "CodexProviderModelLabelV4" in patched
+    assert "model:e,fallback:GM(t,e)?.displayName" in patched
+    assert "disabled:P||p==null,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re" in patched
+    assert "disabled:fe,flyoutHeader:(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),children:re" in patched
+    assert "children:[(0,wQ.jsx)(CodexCustomProviderPickerSection,{}),m," not in patched
 
 
 def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
@@ -304,12 +348,68 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV8" in patched
+    assert "__codexDesktopModelProvidersPatchV13" in patched
     assert "CodexCustomProviderPickerSection" in patched
-    assert "if (e.providers.length < 2) return null;" in patched
+    assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
     assert "label: t.label" in patched
     assert archive.with_name("app.asar.bak").read_bytes() == b"original"
+
+
+def test_windows_patches_26721_5848_with_reactive_provider_labels(
+    tmp_path: Path, monkeypatch
+):
+    import codexier.desktop_patch_windows as windows
+
+    archive = tmp_path / "resources" / "app.asar"
+    archive.parent.mkdir()
+    archive.write_bytes(b"original")
+    config = tmp_path / "desktop-model-providers.json"
+    config.write_text(
+        '{"version": 2, "default_provider": "codexier-test", "providers": '
+        '[{"id": "codexier-test", "label": "Test", "description": '
+        '"Custom Provider", "models": []}]}'
+    )
+    source = "".join(
+        (
+            "async sendRequest(e,t,n){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);return e===`config/read`?this.sendConfigReadRequest(t,n):this.enqueueRequest(e,t,n)}",
+            "async prewarmThreadStart(e,t){if(this.dispatchMessage==null)throw Error(`AppServerRequestClient is missing a message dispatcher`);let n=",
+            "function dMs(e){",
+            "var TMs,wQ,EMs=e((()=>{TMs=c(),",
+            CODEX_26721_5848_SUBMENU_ANCHOR,
+            "let z=R,B=A===void 0?!1:A,V=j===void 0?!0:j,H=M===void 0?!1:M,U=ed(),",
+            "},model:{ariaLabel:U.formatMessage(",
+            "children:[m,(0,wQ.jsx)(`div`,{className:`vertical-scroll-fade-mask",
+            "contentClassName:`w-[280px]`,disabled:P||p==null,children:re",
+            "contentClassName:`w-[280px]`,disabled:fe,children:re",
+            CODEX_26721_5848_MODEL_LABEL_ANCHOR,
+            "async sendConfigReadRequest(",
+            "composer.intelligenceDropdown.tooltipmodelOptionsDisabled",
+        )
+    )
+    monkeypatch.setattr(windows, "asar_header_hash", lambda _archive: "valid")
+    monkeypatch.setattr(windows.shutil, "which", lambda _name: "npx")
+
+    def fake_run(command, **_kwargs):
+        if "extract" in command:
+            bundle = Path(command[-1]) / "webview" / "assets" / "app-initial.js"
+            bundle.parent.mkdir(parents=True)
+            bundle.write_text(source, encoding="utf-8")
+        elif "--check" not in command:
+            Path(command[-1]).write_bytes(
+                (Path(command[-2]) / "webview" / "assets" / "app-initial.js").read_bytes()
+            )
+
+    monkeypatch.setattr(windows, "run", fake_run)
+    windows.patch_windows_app(
+        archive, config, tmp_path / "backups", require_running=False, restart=False
+    )
+
+    patched = archive.read_text(encoding="utf-8")
+    assert "__codexDesktopModelProvidersPatchV13" in patched
+    assert "children: e.description || `Custom Provider`" in patched
+    assert "CodexProviderModelLabelV4" in patched
+    assert "codex.customProviderSelection.v2.change" in patched
 
 
 def test_failed_patch_command_names_the_stage_when_it_has_no_output(monkeypatch):

@@ -41,15 +41,15 @@ def test_unambiguous_process_restarts():
     assert len(calls) == 2
 
 
-def test_desktop_close_force_terminates_a_process_left_in_the_tray():
+def test_desktop_close_never_force_terminates_a_process_left_in_the_tray():
     calls = []
-    states = iter((True, False))
     result = gracefully_close_chatgpt_processes(
         (ChatGPTProcess(42, r"C:\Codex.exe", "me"),),
         timeout_seconds=0.01,
         request_close=lambda pid: calls.append(("close", pid)),
         terminate=lambda pid: calls.append(("terminate", pid)),
-        poll=lambda _pid: next(states),
+        poll=lambda _pid: True,
     )
-    assert result.closed
-    assert calls == [("close", 42), ("terminate", 42)]
+    assert not result.closed
+    assert calls == [("close", 42)]
+    assert "Close it manually" in result.message

@@ -254,6 +254,7 @@ def build_desktop_provider_config(
             {
                 "id": provider_route_id(provider),
                 "label": provider.name,
+                "description": "Custom Provider",
                 "models": [
                     {"id": model.id, "label": model.label}
                     for model in provider.models
@@ -306,7 +307,7 @@ def _merge_profile(
 
 def _provider_route(provider: Provider) -> dict[str, Any]:
     return {
-        "name": provider.name,
+        "name": "Codexier",
         "base_url": provider.base_url.rstrip("/") + "/",
         "wire_api": "responses",
         "wire_specification": "responses",

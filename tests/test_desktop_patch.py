@@ -44,6 +44,16 @@ def test_status_detects_installed_patch(tmp_path: Path):
     assert patch_status(app).patched
 
 
+def test_status_recognizes_v8_patch_as_legacy_upgrade(tmp_path: Path):
+    app = target(tmp_path, b"before__codexDesktopModelProvidersPatchV8after")
+
+    status = patch_status(app)
+
+    assert status.patched
+    assert "older" in status.message
+    assert "upgraded" in status.message
+
+
 def test_already_patched_archive_reports_completion_without_mutation(tmp_path: Path):
     app = target(tmp_path, b"before" + PATCH_MARKER + b"after")
     original = app.archive_path.read_bytes()
@@ -468,7 +478,6 @@ def test_macos_dispatches_verified_adapter_with_progress(tmp_path: Path, monkeyp
     import codexier.desktop_patch_macos as macos
 
     monkeypatch.setattr(macos, "find_target_app_processes", lambda _app: [])
-    monkeypatch.setattr(macos, "gracefully_close_target_app_processes", lambda _app: False)
 
     def fake_patch(app, config, backup_root, overwrite_config, progress=None):
         assert config == home / "desktop-model-providers.json"
@@ -485,3 +494,31 @@ def test_macos_dispatches_verified_adapter_with_progress(tmp_path: Path, monkeyp
     )
     assert status.patched
     assert [percent for percent, _detail in events] == [5, 12, 20, 55, 93, 100]
+
+
+def test_macos_patch_skips_running_app_without_closing_it(
+    tmp_path: Path, monkeypatch
+):
+    app = tmp_path / "ChatGPT.app"
+    archive = app / "Contents" / "Resources" / "app.asar"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"original")
+    home = tmp_path / ".codex"
+    home.mkdir()
+    (home / "desktop-model-providers.json").write_text("{}")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    import codexier.desktop_patch_macos as macos
+
+    monkeypatch.setattr(
+        macos,
+        "find_target_app_processes",
+        lambda received: [(123, str(received / "Contents" / "MacOS" / "ChatGPT"))],
+    )
+
+    status = apply_desktop_patch(
+        DesktopPatchTarget("darwin", archive), tmp_path / "backups"
+    )
+
+    assert status.skipped
+    assert archive.read_bytes() == b"original"
+    assert not (tmp_path / "backups").exists()

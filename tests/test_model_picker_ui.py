@@ -1,9 +1,11 @@
 import asyncio
 import json
 
+from textual.widgets import ListView
+
 from codexier.model_client import LiveModel
 from codexier.models import CodexSettings, ModelDefinition, Provider
-from codexier.provider_store import ProviderStore
+from codexier.provider_store import ProviderStore, add_provider
 from codexier.setup_tui import (
     ApplyScreen,
     ModelPickerScreen,
@@ -168,7 +170,7 @@ def test_enter_saves_provider_after_model_selection(tmp_path):
     asyncio.run(scenario())
 
 
-def test_enabled_applied_fallback_is_preselected_and_opens_sync(tmp_path):
+def test_applied_provider_stays_default_regardless_of_highlight(tmp_path):
     async def scenario() -> None:
         fallback = Provider(
             "fallback", "Fallback", "https://fallback.example/v1", "secret",
@@ -188,9 +190,90 @@ def test_enabled_applied_fallback_is_preselected_and_opens_sync(tmp_path):
         )
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app._selected() == fallback
+            app.query_one("#providers", ListView).index = 0
+            await pilot.pause()
+            assert app._selected() == other
             app.action_use()
             await pilot.pause()
             assert isinstance(app.screen, ApplyScreen)
+            assert app.screen.provider == fallback
+
+    asyncio.run(scenario())
+
+
+def test_enabling_earlier_provider_does_not_replace_existing_default(tmp_path):
+    async def scenario() -> None:
+        earlier = Provider(
+            "earlier", "Earlier", "https://earlier.example/v1", "secret",
+            (ModelDefinition("model-a", "Model A"),), {}, enabled=False,
+        )
+        default = Provider(
+            "default", "Default", "https://default.example/v1", "secret",
+            (ModelDefinition("model-b", "Model B"),), {},
+        )
+        catalog_path = tmp_path / "providers.json"
+        catalog_path.write_text(json.dumps({"version": 1, "providers": []}))
+        app = ProviderManagerApp(
+            catalog_path,
+            (earlier, default),
+            tmp_path / "config.toml",
+            applied_id="default",
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#providers", ListView).index = 0
+            app.action_toggle_enabled()
+            await pilot.pause()
+            app.action_use()
+            await pilot.pause()
+
+            assert isinstance(app.screen, ApplyScreen)
+            assert app.screen.provider == default
+            assert [provider.id for provider in app.screen.enabled_providers] == [
+                "earlier",
+                "default",
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_apply_persists_every_enabled_provider_with_existing_default(tmp_path):
+    async def scenario() -> None:
+        catalog_path = tmp_path / "providers.json"
+        earlier = Provider(
+            "earlier", "Earlier", "https://earlier.example/v1", "secret",
+            (ModelDefinition("model-a", "Model A"),), {}, enabled=False,
+        )
+        default = Provider(
+            "default", "Default", "https://default.example/v1", "secret",
+            (ModelDefinition("model-b", "Model B"),), {},
+        )
+        add_provider(catalog_path, earlier)
+        add_provider(catalog_path, default)
+        app = ProviderManagerApp(
+            catalog_path,
+            (earlier, default),
+            tmp_path / "config.toml",
+            applied_id="default",
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.query_one("#providers", ListView).index = 0
+            await pilot.pause()
+            app.action_toggle_enabled()
+            await pilot.pause()
+            app.action_use()
+            await pilot.pause()
+            app.screen.action_apply_profile()
+            await pilot.pause()
+
+        saved = ProviderStore(catalog_path).load()
+        assert [provider.id for provider in saved if provider.enabled] == [
+            "earlier",
+            "default",
+        ]
+        assert app.return_value == default
 
     asyncio.run(scenario())
