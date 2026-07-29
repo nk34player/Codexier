@@ -911,14 +911,6 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
       try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
-      
-      // Reset config.toml to default provider so thread/list shows all chats
-      try {
-        await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: `codexier` });
-      } catch (resetErr) {
-        console.error(`[codex-provider-patch] config reset failed:`, String(resetErr));
-      }
-      
       return (
         (t.config = a),
         (t.error = null),
@@ -1037,35 +1029,42 @@ function CodexCustomProviderPickerSection() {
 }
 async function codexUpdateConfigModelProvider(e) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
-  alert(`Codexier: Switching provider to ${e}. Next request will route there.`);
-  let writeOk = false;
+  alert(`Codexier: Switching provider to ${e}. ChatGPT will reload in 1 second.`);
   try {
-    await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: e });
-    writeOk = true;
-    console.error(`[codex-provider-patch] config/batchWrite succeeded`);
-  } catch (t1) {
-    console.error(`[codex-provider-patch] config/batchWrite failed:`, String(t1));
-    try {
-      let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
-        sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
-        path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
-        { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } }),
-        patched = raw.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
-      if (patched === raw) {
-        console.error(`[codex-provider-patch] model_provider line not found in config.toml`);
-        alert(`Codexier ERROR: model_provider line not found in config.toml`);
-      } else {
-        await tp(`write-file`, { params: { hostId: `local`, path, contents: patched } });
-        writeOk = true;
-        console.error(`[codex-provider-patch] write-file succeeded`);
-      }
-    } catch (t2) {
-      console.error(`[codex-provider-patch] write-file also failed:`, String(t2));
-      alert(`Codexier ERROR: Both config/batchWrite and write-file failed. Provider NOT switched. Error: ${String(t2)}`);
+    let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
+      sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
+      path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
+      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } });
+    
+    let srcMatch = raw.match(new RegExp(`\\[model_providers\\.${e.replace(/[.*+?^${}()|[\]\\]/g, `\\$&`)}\\]([\\s\\S]*?)(?=\\n\\[|$)`));
+    if (!srcMatch) {
+      alert(`Codexier ERROR: Provider route [model_providers.${e}] not found in config.toml`);
+      return;
     }
-  }
-  if (!writeOk) {
-    console.error(`[codex-provider-patch] all write methods failed — provider NOT switched`);
+    
+    let srcSection = srcMatch[1],
+      baseUrlMatch = srcSection.match(/base_url\s*=\s*"([^"]*)"/),
+      tokenMatch = srcSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/);
+    
+    if (!baseUrlMatch || !tokenMatch) {
+      alert(`Codexier ERROR: Missing base_url or token in [model_providers.${e}]`);
+      return;
+    }
+    
+    let updated = raw.replace(
+      /(\[model_providers\.codexier\][^\[]*base_url\s*=\s*)"[^"]*"/,
+      `$1"${baseUrlMatch[1]}"`
+    ).replace(
+      /(\[model_providers\.codexier\][^\[]*experimental_bearer_token\s*=\s*)"[^"]*"/,
+      `$1"${tokenMatch[1]}"`
+    );
+    
+    await tp(`write-file`, { params: { hostId: `local`, path, contents: updated } });
+    console.error(`[codex-provider-patch] credentials copied from ${e} to codexier route`);
+    setTimeout(() => window.location.reload(), 1000);
+  } catch (err) {
+    console.error(`[codex-provider-patch] switch failed:`, String(err));
+    alert(`Codexier ERROR: ${String(err)}`);
   }
 }
 function codexWriteProviderChoiceV4(e) {
