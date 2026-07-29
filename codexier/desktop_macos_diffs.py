@@ -911,6 +911,17 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
       try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
+      
+      // Sync config.toml with localStorage selection on startup
+      try {
+        let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
+        if (stored && a.providers.some((p) => p.id === stored)) {
+          await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: stored });
+        }
+      } catch (syncErr) {
+        console.error(`[codex-provider-patch] startup sync failed:`, String(syncErr));
+      }
+      
       return (
         (t.config = a),
         (t.error = null),
@@ -1029,6 +1040,7 @@ function CodexCustomProviderPickerSection() {
 }
 async function codexUpdateConfigModelProvider(e) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
+  alert(`Codexier: Switching provider to ${e}. ChatGPT will reload in 1 second.`);
   let writeOk = false;
   try {
     await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: e });
@@ -1044,6 +1056,7 @@ async function codexUpdateConfigModelProvider(e) {
         patched = raw.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
       if (patched === raw) {
         console.error(`[codex-provider-patch] model_provider line not found in config.toml`);
+        alert(`Codexier ERROR: model_provider line not found in config.toml`);
       } else {
         await tp(`write-file`, { params: { hostId: `local`, path, contents: patched } });
         writeOk = true;
@@ -1051,11 +1064,12 @@ async function codexUpdateConfigModelProvider(e) {
       }
     } catch (t2) {
       console.error(`[codex-provider-patch] write-file also failed:`, String(t2));
+      alert(`Codexier ERROR: Both config/batchWrite and write-file failed. Provider NOT switched. Error: ${String(t2)}`);
     }
   }
   if (writeOk) {
     console.error(`[codex-provider-patch] reloading to restart Codex with new provider`);
-    setTimeout(() => window.location.reload(), 600);
+    setTimeout(() => window.location.reload(), 1000);
   } else {
     console.error(`[codex-provider-patch] all write methods failed — provider NOT switched`);
   }
