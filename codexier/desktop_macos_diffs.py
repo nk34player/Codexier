@@ -911,17 +911,6 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
       try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
-      
-      // Sync config.toml with localStorage selection on startup
-      try {
-        let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
-        if (stored && a.providers.some((p) => p.id === stored)) {
-          await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: stored });
-        }
-      } catch (syncErr) {
-        console.error(`[codex-provider-patch] startup sync failed:`, String(syncErr));
-      }
-      
       return (
         (t.config = a),
         (t.error = null),
