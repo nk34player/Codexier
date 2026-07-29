@@ -44,14 +44,14 @@ def test_status_detects_installed_patch(tmp_path: Path):
     assert patch_status(app).patched
 
 
-def test_status_recognizes_v8_patch_as_legacy_upgrade(tmp_path: Path):
+def test_status_recognizes_legacy_patch_as_reapply_required(tmp_path: Path):
     app = target(tmp_path, b"before__codexDesktopModelProvidersPatchV8after")
 
     status = patch_status(app)
 
     assert status.patched
     assert "older" in status.message
-    assert "upgraded" in status.message
+    assert "re-apply" in status.message.lower() or "reapply" in status.message.lower() or "--patch-desktop" in status.message
 
 
 def test_already_patched_archive_reports_completion_without_mutation(tmp_path: Path):

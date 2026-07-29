@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+from codexier.desktop_macos_diffs import render_unified_diff
 from codexier.desktop_patch_macos import (
     CODEX_26721_4979_CENTRAL_ANCHOR,
     CODEX_26721_4979_LAYOUT,
@@ -17,19 +18,14 @@ from codexier.desktop_patch_macos import (
     CODEX_26721_5848_LAYOUT,
     CODEX_26721_5848_MODEL_LABEL_ANCHOR,
     CODEX_26721_5848_SUBMENU_ANCHOR,
-    CENTRAL_DIFF,
-    CENTRAL_DIFF_V6_TO_V7,
     CENTRAL_DIFF_26721_V7,
     CENTRAL_V7_JAVASCRIPT,
-    PICKER_DIFF,
-    PICKER_DIFF_26721,
-    PICKER_DIFF_V6_TO_V7,
+    PATCH_MARKER,
     PICKER_DIFF_26721_V7,
     PICKER_V7_JAVASCRIPT,
     PatchError,
     apply_supported_patch_variant,
     ensure_provider_config,
-    render_unified_diff,
     run,
     validate_provider_config,
 )
@@ -121,297 +117,13 @@ def test_generated_desktop_patch_keeps_custom_threads_visible_and_routes_new_sta
     assert "providerId: o.id" in patch_source
 
 
-def test_v6_upgrade_removes_synthetic_openai_and_installs_current_marker():
-    central = """function codexProviderRoutingFallbackV4() {
-  return {
-    version: 2,
-    defaultProvider: `openai`,
-    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
-  };
-}
-function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV6 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-  });
-}
-async function codexPatchAppServerParams(e, t) {
-  let n = {}, r = null;
-  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-  if (i == null) return t;
-  if (i.id !== `openai` && !i.models.some((e) => e.id === t.model))
-    throw Error(`The selected model is not configured for the selected provider`);
-}
-"""
-    picker = """function codexPickerProviderRoutingFallbackV4() {
-  return {
-    version: 2,
-    defaultProvider: `openai`,
-    providers: [{ id: `openai`, label: `ChatGPT / OpenAI`, description: `Uses your signed-in ChatGPT account`, models: [] }],
-  };
-}
-function codexUseProviderModels(e) {
-  let r = { config: {} }, t = { providers: [] }, i = null;
-  let o = t.providers.find((e) => e.id === i) ?? t.providers.find((e) => e.id === t.defaultProvider);
-  if (o == null) return e;
-  if (o.id === `openai`) {
-    let t = new Set(r.config.providers.flatMap((e) => e.id === `openai` ? [] : e.models.map((e) => e.id)));
-    return e?.filter((e) => !t.has(e.model));
-  }
-  return o.models.flatMap((t) => {
-    return [];
-  });
-}
-"""
-
-    upgraded_central = render_unified_diff(central, CENTRAL_DIFF_V6_TO_V7, "central.js")
-    upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V6_TO_V7, "picker.js")
-    upgraded = (upgraded_central + upgraded_picker).casefold()
-
-    assert "__codexdesktopmodelproviderspatchv22" in upgraded
-    assert "chatgpt / openai" not in upgraded
-    assert "defaultprovider: `openai`" not in upgraded
-    assert "id === `openai`" not in upgraded
-    assert "thread/list" not in upgraded
-    assert "thread/read" not in upgraded
-    assert "workspace" not in upgraded
-    assert "defaultprovider: null" in upgraded
-    assert "providers: []" in upgraded
-
-
-def test_v16_upgrade_refreshes_provider_route_patch():
-    from codexier.desktop_patch_macos import CENTRAL_DIFF_V16_TO_V17, PICKER_DIFF_V16_TO_V17
-
-    central = """function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-  });
-}
-async function codexPatchAppServerParams(e, t) {
-  if (e === `thread/list`) {
-    let n = t != null && typeof t === `object` ? t : {};
-    return { ...n, modelProviders: null };
-  }
-  if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
-  let n = await codexLoadProviderRoutingConfigV4(!0), r;
-  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
-  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-  if (i?.models.some((e) => e.id === t.model))
-    return { ...t, modelProvider: i.id };
-  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
-  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
-}
-"""
-    picker = """function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV16 ??= {
-    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
-  });
-}
-"""
-
-    upgraded_central = render_unified_diff(central, CENTRAL_DIFF_V16_TO_V17, "central.js")
-    upgraded_picker = render_unified_diff(picker, PICKER_DIFF_V16_TO_V17, "picker.js")
-    upgraded = (upgraded_central + upgraded_picker).casefold()
-
-    assert "__codexdesktopmodelproviderspatchv22" in upgraded
-    assert "modelprovider: i.id" in upgraded
-    assert "modelprovider: a[0].id" in upgraded
-    assert "modelprovider: `codexier`" not in upgraded
-
-
-def test_v18_upgrade_installs_current_marker_without_v19_map():
-    from codexier.desktop_patch_macos import (
-        CENTRAL_DIFF_V18_TO_V20,
-        PICKER_DIFF_V18_TO_V20,
-    )
-
-    central = """function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV18 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-  });
-}
-"""
-    picker = """function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV18 ??= {
-    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
-  });
-}
-"""
-
-    upgraded = (
-        render_unified_diff(central, CENTRAL_DIFF_V18_TO_V20, "central.js")
-        + render_unified_diff(picker, PICKER_DIFF_V18_TO_V20, "picker.js")
-    )
-
-    assert "__codexDesktopModelProvidersPatchV22" in upgraded
-    assert "codex.customModelProviders.v1" not in upgraded
-    assert "codexSyncProviderChoiceForModelV4" not in upgraded
-
-
-def test_v19_upgrade_removes_stale_model_provider_map():
-    from codexier.desktop_patch_macos import (
-        CENTRAL_DIFF_V19_TO_V20,
-        PICKER_DIFF_V19_TO_V20,
-    )
-
-    central = """function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV19 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-  });
-}
-async function codexPatchAppServerParams(e, t) {
- if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
- let n = await codexLoadProviderRoutingConfigV4(!0), r;
- try {
-   let e = JSON.parse(window.localStorage.getItem(`codex.customModelProviders.v1`));
-   r = typeof e?.[t.model] === `string` ? e[t.model] : null;
- } catch {}
- try { r ??= window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
- let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-}
-"""
-    picker = """function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV19 ??= {
-    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
-  });
-}
-function codexPickerModelLabelV4(e, t) {
-  let o = typeof e === `string` ? e : typeof e?.model === `string` ? e.model : typeof e?.id === `string` ? e.id : ``,
-    n = codexPickerProviderRoutingStateV4().config,
-    r = typeof e?.providerId === `string` ? e.providerId : null;
-  if (r == null) {
-    try {
-      let e = JSON.parse(window.localStorage.getItem(`codex.customModelProviders.v1`));
-      r = typeof e?.[o] === `string` ? e[o] : null;
-    } catch {}
-  }
-  r ??= codexReadProviderChoiceV4(n);
-  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider),
-    s = i?.models.find((e) => e.id === o);
-  if (s != null) return `${s.label} (${i.label})`;
-  let a = n.providers.filter((e) => e.models.some((e) => e.id === o));
-  if (a.length === 1) {
-    let e = a[0].models.find((e) => e.id === o);
-    return `${e.label} (${a[0].label})`;
-  }
-  return t;
-}
-function codexSyncProviderChoiceForModelV4(e) {
-  if (e == null) return;
-  try {
-    let t = JSON.parse(window.localStorage.getItem(`codex.customModelProviders.v1`));
-    if (t == null || typeof t !== `object` || Array.isArray(t)) t = {};
-    for (let n of e.models ?? [])
-      typeof n?.id === `string` && (t[n.id] = e.id);
-    window.localStorage.setItem(`codex.customModelProviders.v1`, JSON.stringify(t));
-    let n = window.localStorage.getItem(`codex.customProviderSelection.v2`);
-    n !== e.id &&
-      (window.localStorage.setItem(`codex.customProviderSelection.v2`, e.id),
-      window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`)));
-  } catch {}
-}
-function codexUseProviderModels(e, s, c) {
-  let l = o.models.flatMap((t) => ({
-      label: t.label,
-      displayName: `${t.label} (${o.label})`,
-    }));
-  CodexProviderPatchReact.useEffect(() => {
-    codexSyncProviderChoiceForModelV4(o);
-  }, [o]);
-  CodexProviderPatchReact.useEffect(() => {
-    if (o != null && s != null && !l.some((e) => e.model === s) && l[0] != null)
-      c?.(l[0].model, l[0].defaultReasoningEffort);
-  }, [o, s, l, c]);
-}
-"""
-
-    upgraded = (
-        render_unified_diff(central, CENTRAL_DIFF_V19_TO_V20, "central.js")
-        + render_unified_diff(picker, PICKER_DIFF_V19_TO_V20, "picker.js")
-    )
-
-    assert "__codexDesktopModelProvidersPatchV22" in upgraded
-    assert "codex.customModelProviders.v1" not in upgraded
-    assert "codexSyncProviderChoiceForModelV4" not in upgraded
-    assert "window.localStorage.getItem(`codex.customProviderSelection.v2`)" in upgraded
-
-
-def test_v20_upgrade_makes_footer_label_provider_authoritative():
-    from codexier.desktop_patch_macos import (
-        CENTRAL_DIFF_V20_TO_V22,
-        PICKER_DIFF_V20_TO_V22,
-    )
-
-    central = """function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV20 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-  });
-}
-async function codexPatchAppServerParams(e, t) {
-  if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
-  let n = await codexLoadProviderRoutingConfigV4(!0), r;
-  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
-  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-  if (i?.models.some((e) => e.id === t.model))
-    return { ...t, modelProvider: i.id };
-  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
-  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
-}
-"""
-    picker = """function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV20 ??= {
-    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
-  });
-}
-function $X(e){let t=(0,Ics.c)(14),{model:n,displayName:r,labelClassName:i,serviceTierIconKind:a,stripGptPrefix:o}=e,s=a===void 0?null:a,c=o===void 0?!1:o,l;if(r!=null){let e;if(t[0]!==r||t[1]!==c){let n=GX(r);e=c?n.replace(/^GPT-/iu,``):n,t[0]=r,t[1]=c,t[2]=e}else e=t[2];l=e}else if(n){l=(0,Lcs.jsx)(CodexProviderModelLabelV4,{value:n,fallback:n})}else l=n;let u;return u}
-"""
-
-    upgraded = (
-        render_unified_diff(central, CENTRAL_DIFF_V20_TO_V22, "central.js")
-        + render_unified_diff(picker, PICKER_DIFF_V20_TO_V22, "picker.js")
-    )
-
-    assert "__codexDesktopModelProvidersPatchV22" in upgraded
-    assert "CodexProviderModelLabelV4,{value:n,fallback:r??n}" in upgraded
-    assert "CodexProviderModelLabelV4,{value:n,fallback:n}" not in upgraded
-
-
-def test_v21_upgrade_makes_selected_provider_authoritative_for_duplicate_models():
-    from codexier.desktop_patch_macos import (
-        CENTRAL_DIFF_V21_TO_V22,
-        PICKER_DIFF_V21_TO_V22,
-    )
-
-    central = """function codexProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV21 ??= {
-    config: codexProviderRoutingFallbackV4(), error: null, loaded: !1, promise: null,
-  });
-}
-async function codexPatchAppServerParams(e, t) {
-  if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
-  let n = await codexLoadProviderRoutingConfigV4(!0), r;
-  try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
-  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-  if (i?.models.some((e) => e.id === t.model))
-    return { ...t, modelProvider: i.id };
-  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
-  return a.length === 1 ? { ...t, modelProvider: a[0].id } : t;
-}
-"""
-    picker = """function codexPickerProviderRoutingStateV4() {
-  return (window.__codexDesktopModelProvidersPatchV21 ??= {
-    config: codexPickerCachedProviderRoutingConfigV4(), error: null, loaded: !1, promise: null,
-  });
-}
-"""
-
-    upgraded = (
-        render_unified_diff(central, CENTRAL_DIFF_V21_TO_V22, "central.js")
-        + render_unified_diff(picker, PICKER_DIFF_V21_TO_V22, "picker.js")
-    )
-
-    assert "__codexDesktopModelProvidersPatchV22" in upgraded
-    assert "if (i != null) return { ...t, modelProvider: i.id };" in upgraded
-    assert "?? n.providers.find((e) => e.id === n.defaultProvider)" not in upgraded
+def test_single_patch_payload_has_unversioned_marker_and_authoritative_routing():
+    patch_source = "\n".join((CENTRAL_V7_JAVASCRIPT, PICKER_V7_JAVASCRIPT))
+    assert "__codexDesktopModelProvidersPatch" in patch_source
+    assert "PatchV" not in patch_source
+    assert "if (i != null) return { ...t, modelProvider: i.id };" in patch_source
+    assert "codexSyncProviderChoiceForModelV4" not in patch_source
+    assert "codex.customModelProviders.v1" not in patch_source
 
 
 def test_missing_provider_config_is_not_replaced_with_examples(tmp_path: Path):
@@ -493,7 +205,7 @@ def test_26721_4979_merged_bundle_uses_one_source_validated_patch(tmp_path: Path
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_4979_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV22" in patched
+    assert "__codexDesktopModelProvidersPatch" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -533,7 +245,7 @@ def test_5848_bundle_shows_provider_config_errors_and_custom_model_labels(tmp_pa
 
     assert apply_supported_patch_variant(bundle, bundle) == CODEX_26721_5848_LAYOUT
     patched = bundle.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV22" in patched
+    assert "__codexDesktopModelProvidersPatch" in patched
     assert "p=codexUseProviderModels(p,d,y);" in patched
     assert "codex.customProviderSelection.v2.change" in patched
     assert "codex.customProviderRouting.v4" in patched
@@ -598,7 +310,7 @@ def test_windows_patches_26721_4979_merged_bundle(tmp_path: Path, monkeypatch):
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV22" in patched
+    assert "__codexDesktopModelProvidersPatch" in patched
     assert "CodexCustomProviderPickerSection" in patched
     assert "if (e.providers.length < 2 && a == null) return null;" in patched
     assert "name: t.label" in patched
@@ -657,7 +369,7 @@ def test_windows_patches_26721_5848_with_reactive_provider_labels(
     )
 
     patched = archive.read_text(encoding="utf-8")
-    assert "__codexDesktopModelProvidersPatchV22" in patched
+    assert "__codexDesktopModelProvidersPatch" in patched
     assert "children: e.description || `Custom Provider`" in patched
     assert "CodexProviderModelLabelV4" in patched
     assert "value:e,fallback:GM(t,e)?.displayName" in patched

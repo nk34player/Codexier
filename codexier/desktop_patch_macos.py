@@ -45,7 +45,11 @@ except ImportError:  # Windows imports the shared source-validation helpers.
 
 
 from .desktop_macos_diffs import *  # noqa: F401,F403
-from .desktop_macos_diffs import PATCH_MARKER, ASAR_PACKAGE  # noqa: F401
+from .desktop_macos_diffs import (  # noqa: F401
+    ASAR_PACKAGE,
+    PATCH_MARKER,
+    content_has_any_patch,
+)
 
 
 def colors_enabled(stream: Any = sys.stdout) -> bool:
@@ -497,19 +501,24 @@ def asar_header_hash(path: Path) -> str:
 
 
 def contains_marker(path: Path, marker: bytes = PATCH_MARKER) -> bool:
-    overlap = len(marker) - 1
+    """True when *path* contains any Codexier patch marker (current or legacy)."""
+    # Streaming scan for the shared prefix so old ...PatchV* installs are found.
+    from .desktop_macos_diffs import PATCH_MARKER_PREFIX
+
+    needle = PATCH_MARKER_PREFIX if marker == PATCH_MARKER else marker
+    overlap = len(needle) - 1
     previous = b""
     with path.open("rb") as handle:
         while chunk := handle.read(4 * 1024 * 1024):
             data = previous + chunk
-            if marker in data:
+            if needle in data:
                 return True
             previous = data[-overlap:] if overlap else b""
     return False
 
 
-def contains_legacy_marker(path: Path) -> bool:
-    return any(contains_marker(path, marker) for marker in LEGACY_PATCH_MARKERS)
+def contains_any_patch_marker(path: Path) -> bool:
+    return contains_marker(path)
 
 
 def load_plist(path: Path) -> tuple[dict[str, Any], plistlib.PlistFormat]:
@@ -796,7 +805,7 @@ def restore_archive_backup(
     """Restore an immutable app.asar.bak and re-sign its matching app bundle."""
     asar_path = app / "Contents" / "Resources" / "app.asar"
     info_path = app / "Contents" / "Info.plist"
-    if not backup.is_file() or contains_marker(backup) or contains_legacy_marker(backup):
+    if not backup.is_file() or contains_marker(backup) or contains_any_patch_marker(backup):
         raise PatchError(f"Backup is not an original app.asar archive: {backup}")
     original_asar = asar_path.read_bytes()
     original_info = info_path.read_bytes()
@@ -824,7 +833,7 @@ def restore_archive_backup(
             asar_path.read_bytes() != backup.read_bytes()
             or asar_header_hash(asar_path) != asar_integrity_hash(final_info)
             or contains_marker(asar_path)
-            or contains_legacy_marker(asar_path)
+            or contains_any_patch_marker(asar_path)
         ):
             raise PatchError("Restored app does not match its immutable original backup")
     except Exception:
@@ -921,8 +930,8 @@ def patch_app(
     version = str(info.get("CFBundleShortVersionString", "unknown"))
     build = str(info.get("CFBundleVersion", "unknown"))
     sidecar = asar_path.with_name(f"{asar_path.name}.bak")
-    if contains_marker(asar_path) or contains_legacy_marker(asar_path):
-        if not sidecar.is_file() or contains_marker(sidecar) or contains_legacy_marker(sidecar):
+    if contains_marker(asar_path) or contains_any_patch_marker(asar_path):
+        if not sidecar.is_file() or contains_marker(sidecar) or contains_any_patch_marker(sidecar):
             raise PatchError(
                 "Cannot apply new patches to an already patched app without a "
                 f"verified immutable original backup at: {sidecar}"
@@ -937,7 +946,7 @@ def patch_app(
         info, plist_format = load_plist(info_path)
 
     sidecar, created = immutable_file_backup(asar_path)
-    if contains_marker(sidecar) or contains_legacy_marker(sidecar):
+    if contains_marker(sidecar) or contains_any_patch_marker(sidecar):
         raise PatchError(f"Immutable backup is patched and cannot be used: {sidecar}")
     asar_header_hash(sidecar)
     report(

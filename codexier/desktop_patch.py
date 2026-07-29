@@ -25,8 +25,12 @@ from .backup import atomic_write
 from .patch_progress import PatchProgress, report
 
 
-PATCH_MARKER = b"__codexDesktopModelProvidersPatchV22"
-PATCH_MARKER_PREFIX = b"__codexDesktopModelProvidersPatch"
+from .desktop_macos_diffs import (
+    PATCH_MARKER,
+    PATCH_MARKER_PREFIX,
+    content_has_any_patch,
+    content_has_current_patch,
+)
 
 
 @dataclass(frozen=True)
@@ -45,7 +49,7 @@ class DesktopPatchStatus:
     supported: bool
     message: str
     skipped: bool = False
-    upgrade_required: bool = False
+    reapply_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -256,15 +260,17 @@ def patch_status(target: DesktopPatchTarget) -> DesktopPatchStatus:
         content = target.archive_path.read_bytes()
     except OSError as exc:
         return DesktopPatchStatus(target, False, False, f"Cannot read app archive: {exc}.")
-    if PATCH_MARKER in content:
+    if content_has_current_patch(content):
         return DesktopPatchStatus(target, True, True, "Codexier desktop patch is installed.")
-    if PATCH_MARKER_PREFIX in content:
+    if content_has_any_patch(content):
         return DesktopPatchStatus(
             target,
             True,
             True,
-            "An older Codexier desktop patch will be upgraded on the next sync.",
-            upgrade_required=True,
+            "An older Codexier desktop patch is installed. Close the app and "
+            "re-run with --patch-desktop to restore the original archive and "
+            "apply the current single patch.",
+            reapply_required=True,
         )
     if target.platform == "darwin":
         return DesktopPatchStatus(target, False, True, "macOS app is ready for source validation.")
@@ -413,7 +419,7 @@ def desktop_backups(target: DesktopPatchTarget, backup_root: Path) -> tuple[Desk
     for path, archive, kind in candidates:
         try:
             stat = archive.stat()
-            patched = PATCH_MARKER_PREFIX in archive.read_bytes()
+            patched = content_has_any_patch(archive.read_bytes())
         except OSError as exc:
             try:
                 modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
@@ -526,7 +532,7 @@ def apply_desktop_patch(
     if status.skipped:
         report(emit, "completion", status.message)
         return status
-    if status.patched and not status.upgrade_required:
+    if status.patched and not status.reapply_required:
         report(emit, "completion", "already patched; app.asar was not modified")
         return status
     if not status.supported:
@@ -664,7 +670,7 @@ def restore_desktop_patch(
     source = backup if backup.is_file() else backup / "app.asar"
     if not source.is_file():
         raise ConfigError(f"Backup does not contain app.asar: {backup}")
-    if PATCH_MARKER_PREFIX in source.read_bytes():
+    if content_has_any_patch(source.read_bytes()):
         raise ConfigError(f"Backup is patched and cannot be restored: {backup}")
     report(progress, "process stop", "closing the desktop app before restore")
     try:

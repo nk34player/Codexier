@@ -72,8 +72,10 @@ def test_legacy_macos_patch_waits_for_explicit_install(monkeypatch, capsys, tmp_
             target,
             True,
             True,
-            "An older Codexier desktop patch will be upgraded on the next sync.",
-            upgrade_required=True,
+            "Older desktop patch detected. Close ChatGPT, then rerun with "
+            "--patch-desktop to restore the original archive and apply the "
+            "current single patch.",
+            reapply_required=True,
         ),
     )
     monkeypatch.setattr(

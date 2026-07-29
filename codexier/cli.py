@@ -93,10 +93,11 @@ def _manage_macos_desktop_app(*, install_patch: bool) -> None:
     status = patch_status(target)
     if install_patch:
         _apply_post_sync_desktop_patch()
-    elif status.upgrade_required:
+    elif status.reapply_required:
         print(
-            "Desktop patch update available. Close ChatGPT, then rerun with "
-            "--patch-desktop."
+            "Older desktop patch detected. Close ChatGPT, then rerun with "
+            "--patch-desktop to restore the original archive and apply the "
+            "current single patch."
         )
 
 

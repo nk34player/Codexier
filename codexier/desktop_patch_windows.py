@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .backup import immutable_file_backup
+from .desktop_macos_diffs import content_has_current_patch
 from .desktop_patch_macos import (
     ASAR_PACKAGE,
     PATCH_MARKER,
@@ -142,7 +143,8 @@ def patch_windows_app(
         raise PatchError(f"Could not read desktop provider configuration: {exc}") from exc
     validate_provider_config(provider_config)
     report(progress, "validation", "validated the provider configuration and archive")
-    if contains_marker(archive):
+    archive_bytes = archive.read_bytes()
+    if content_has_current_patch(archive_bytes):
         return WindowsPatchResult(backup_root, False)
     # Reject truncated or malformed archives before process shutdown or backup.
     asar_header_hash(archive)
@@ -164,6 +166,20 @@ def patch_windows_app(
         executable = _gracefully_close_target_processes(processes)
     else:
         report(progress, "process stop", "portable app is not running")
+    sidecar = archive.with_name(f"{archive.name}.bak")
+    if contains_marker(archive):
+        # Stale/legacy marker: restore stock from immutable sidecar, then inject
+        # the single current payload. No surgical version upgrades.
+        if not sidecar.is_file() or contains_marker(sidecar):
+            raise PatchError(
+                "Cannot re-apply the desktop patch to an already patched archive "
+                f"without a verified immutable original backup at: {sidecar}"
+            )
+        report(progress, "backup", f"restoring immutable original archive: {sidecar}")
+        from .backup import atomic_write
+
+        atomic_write(archive, sidecar.read_bytes())
+        asar_header_hash(archive)
     sidecar, created = immutable_file_backup(archive)
     if contains_marker(sidecar):
         raise PatchError(f"Immutable backup is patched and cannot be used: {sidecar}")

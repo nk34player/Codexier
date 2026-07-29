@@ -51,21 +51,48 @@ Never commit API keys. Protect `providers.json` with private filesystem permissi
 
 The desktop UI is not maintained as standalone JavaScript source in this
 repository. JavaScript is embedded as source-validated unified-diff payloads
-inside `codexier/desktop_patch_macos.py`; the same patch definitions are used
+inside `codexier/desktop_macos_diffs.py`; the same patch definitions are used
 by the Windows desktop patch path. Do not edit an extracted app bundle
 directly. Update the embedded JavaScript and its exact source anchors/tests
 together.
 
-The patch currently supports two known ChatGPT desktop layouts:
+The patch supports the known ChatGPT desktop layouts through stock-only
+injectors:
 
-- The legacy/separate-bundle layout uses `CENTRAL_DIFF` and `PICKER_DIFF`.
-- The merged `app-initial` layout uses the `CODEX_26721_4979_*` and
-  `CODEX_26721_5848_*` anchors plus generated V7 diffs.
+- The legacy/separate-bundle layout uses `CENTRAL_DIFF` and `PICKER_DIFF`
+  (kept as intermediate source; the injected block is generated from
+  `CENTRAL_V7_JAVASCRIPT` / `PICKER_V7_JAVASCRIPT`).
+- The merged `app-initial` 26.721.4979 layout uses the
+  `CODEX_26721_4979_*` anchors and `_apply_codex_26721_4979_layout`.
+- The merged `app-initial` 26.721.5848 layout uses the
+  `CODEX_26721_5848_*` anchors inside `apply_supported_patch_variant`.
 
-The current patch marker is V22:
-`__codexDesktopModelProvidersPatchV22`. Any JavaScript behavior change must
-bump the marker and add/adjust upgrade coverage so an older installed patch is
-replaced safely.
+### Single-patch model (no version ladder)
+
+There is exactly one patch payload and one unversioned marker:
+`__codexDesktopModelProvidersPatch`. There are no `V1`…`V22` upgrade diffs
+and no `LEGACY_PATCH_MARKERS`. To change JavaScript behavior, edit only
+`CENTRAL_V7_JAVASCRIPT` and/or `PICKER_V7_JAVASCRIPT` (and the stock anchors
+if the ChatGPT app build changed). Do not add version suffixes or upgrade
+variants.
+
+Re-apply is always: restore the immutable original archive from
+`app.asar.bak`, then inject the single payload onto clean stock bundles. On
+macOS, `patch_app` already restores before applying. On Windows,
+`patch_windows_app` restores from the sidecar when any prior Codexier marker
+is present, then applies the single payload. If no clean original backup
+exists, the installer hard-fails; it never attempts a surgical old→new
+upgrade.
+
+Marker helpers in `desktop_macos_diffs.py`:
+- `content_has_current_patch(content)` — true only for the unversioned marker
+  (rejects `...PatchV*` legacy strings).
+- `content_has_any_patch(content)` — true for the unversioned marker or any
+  legacy `...PatchV*` install (used to trigger restore-then-apply).
+
+`DesktopPatchStatus.upgrade_required` was removed; legacy installs report
+`reapply_required=True` so the CLI tells the user to close the app and re-run
+with `--patch-desktop`.
 
 ### Provider and model identity
 
@@ -109,7 +136,7 @@ provider. Future fixes must verify both the visible identity and the outgoing
 - The authoritative config is read from
   `desktop-model-providers.json` under the Codex home directory.
 
-The current V22 routing code makes the selected provider authoritative for
+The current routing code makes the selected provider authoritative for
 `thread/start`, even when another provider exposes the same model ID. It only
 uses sole-provider or configured-default fallback when no valid explicit
 provider selection exists. This prevents duplicate model IDs from silently
@@ -119,40 +146,35 @@ state, model entry `providerId`, prewarm payload, then final `thread/start`
 payload.
 
 Inspection of the installed ChatGPT app confirmed that the patched
-`app-initial-*.js` bundle contains the same V22 selection-authoritative logic.
+`app-initial-*.js` bundle contains the same selection-authoritative logic.
 The model menu calls the generic `onSelectModel` callback with only `model`
 and reasoning effort; it does not pass `providerId`. Therefore routing must be
 driven by the selected provider (`codex.customProviderSelection.v2`) and the
 model list must be built from the same selected provider. Do not reintroduce a
-model-id-only mirror map: V19's `codex.customModelProviders.v1` /
-`codexSyncProviderChoiceForModelV4(...)` regressed duplicate model IDs by
-overriding the live provider selection.
+model-id-only mirror map: the old `codex.customModelProviders.v1` /
+`codexSyncProviderChoiceForModelV4(...)` approach regressed duplicate model
+IDs by overriding the live provider selection.
 
 The installed bundle also confirmed that the normal `sendRequest` path and
 `prewarmThreadStart` both pass through `codexPatchAppServerParams`; future
 routing debugging must inspect both paths before changing the request seam.
 
-V22 fixes the remaining composer footer label issue in the 26.721.5848 merged
-bundle. The minified `$X(...)` footer component used `displayName` before
-`model`, so a stale `displayName` such as `5.6 Luna (a6api)` prevented the
-provider-aware `CodexProviderModelLabelV4` lookup from running after TongApi
-was selected. Keep `$X(...)` model-first:
+The composer footer label must stay model-first:
 `CodexProviderModelLabelV4({ value: model, fallback: displayName ?? model })`.
+The minified `$X(...)` footer component used `displayName` before `model`, so
+a stale `displayName` such as `5.6 Luna (a6api)` prevented the provider-aware
+`CodexProviderModelLabelV4` lookup from running after TongApi was selected.
 Do not revert it to displayName-first.
 
-Important upgrade finding: changing only the source marker does not upgrade an
-already-patched bundle. V22 includes dedicated V18/V19-to-current and
-V20-to-V22 upgrade variants; without them, the installer rejects the installed
-bundle and the old frontend/backend bugs remain active.
-The temporary extraction used for this inspection is `.codexier-app-inspect/`;
-it is disposable and must never be committed.
+The temporary extraction used for inspection is `.codexier-app-inspect/`; it
+is disposable and must never be committed.
 
 ### Known symptom and investigation rule
 
 Observed symptom: choosing `5.6 Luna (a6api)` can still produce a TongApi
 request, while choosing `5.6 Luna (TongApi)` can still leave the composer
 footer showing `5.6 Luna (a6api)`. This represents two independent bugs. The
-frontend and backend fixes are now in the V22 embedded patch:
+frontend and backend fixes are in the single embedded patch:
 
 1. **Backend/request bug:** the actual `thread/start` or prewarm request has
    the wrong `modelProvider` (often the default).
