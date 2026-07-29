@@ -1039,28 +1039,40 @@ async function codexUpdateConfigModelProvider(e) {
     let srcMatch = raw.match(new RegExp(`\\[model_providers\\.${e.replace(/[.*+?^${}()|[\]\\]/g, `\\$&`)}\\]([\\s\\S]*?)(?=\\n\\[|$)`));
     if (!srcMatch) {
       alert(`Codexier ERROR: Provider route [model_providers.${e}] not found in config.toml`);
+      console.error(`[codex-provider-patch] source section not found for ${e}`);
       return;
     }
     
     let srcSection = srcMatch[1],
-      baseUrlMatch = srcSection.match(/base_url\s*=\s*"([^"]*)"/),
-      tokenMatch = srcSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/);
+      srcBaseUrl = srcSection.match(/base_url\s*=\s*"([^"]*)"/)?.[1],
+      srcToken = srcSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/)?.[1];
     
-    if (!baseUrlMatch || !tokenMatch) {
+    if (!srcBaseUrl || !srcToken) {
       alert(`Codexier ERROR: Missing base_url or token in [model_providers.${e}]`);
+      console.error(`[codex-provider-patch] base_url=${srcBaseUrl}, token=${srcToken ? 'present' : 'missing'}`);
       return;
     }
     
-    let updated = raw.replace(
-      /(\[model_providers\.codexier\][^\[]*base_url\s*=\s*)"[^"]*"/,
-      `$1"${baseUrlMatch[1]}"`
-    ).replace(
-      /(\[model_providers\.codexier\][^\[]*experimental_bearer_token\s*=\s*)"[^"]*"/,
-      `$1"${tokenMatch[1]}"`
-    );
+    console.error(`[codex-provider-patch] copying: base_url=${srcBaseUrl}, token=${srcToken.substring(0,8)}...`);
+    
+    let updated = raw
+      .replace(
+        /(^\[model_providers\.codexier\]\s*\n(?:[^\[\n]*\n)*?base_url\s*=\s*)"[^"]*"/m,
+        `$1"${srcBaseUrl}"`
+      )
+      .replace(
+        /(^\[model_providers\.codexier\]\s*\n(?:[^\[\n]*\n)*?experimental_bearer_token\s*=\s*)"[^"]*"/m,
+        `$1"${srcToken}"`
+      );
+    
+    if (updated === raw) {
+      alert(`Codexier ERROR: Failed to update [model_providers.codexier] - regex didn't match`);
+      console.error(`[codex-provider-patch] TOML update failed - no changes made`);
+      return;
+    }
     
     await tp(`write-file`, { params: { hostId: `local`, path, contents: updated } });
-    console.error(`[codex-provider-patch] credentials copied from ${e} to codexier route`);
+    console.error(`[codex-provider-patch] config.toml updated successfully`);
     setTimeout(() => window.location.reload(), 1000);
   } catch (err) {
     console.error(`[codex-provider-patch] switch failed:`, String(err));
