@@ -911,6 +911,14 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
       try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
+      
+      // Reset config.toml to default provider so thread/list shows all chats
+      try {
+        await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: `codexier` });
+      } catch (resetErr) {
+        console.error(`[codex-provider-patch] config reset failed:`, String(resetErr));
+      }
+      
       return (
         (t.config = a),
         (t.error = null),
@@ -1029,7 +1037,7 @@ function CodexCustomProviderPickerSection() {
 }
 async function codexUpdateConfigModelProvider(e) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
-  alert(`Codexier: Switching provider to ${e}. ChatGPT will reload in 1 second.`);
+  alert(`Codexier: Switching provider to ${e}. Next request will route there.`);
   let writeOk = false;
   try {
     await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: e });
@@ -1056,10 +1064,7 @@ async function codexUpdateConfigModelProvider(e) {
       alert(`Codexier ERROR: Both config/batchWrite and write-file failed. Provider NOT switched. Error: ${String(t2)}`);
     }
   }
-  if (writeOk) {
-    console.error(`[codex-provider-patch] reloading to restart Codex with new provider`);
-    setTimeout(() => window.location.reload(), 1000);
-  } else {
+  if (!writeOk) {
     console.error(`[codex-provider-patch] all write methods failed — provider NOT switched`);
   }
 }
