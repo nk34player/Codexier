@@ -848,24 +848,6 @@ async function codexPatchAppServerParams(e, t) {
   if (a.length === 1) return { ...t, modelProvider: a[0].id };
   let o = n.providers.find((e) => e.id === n.defaultProvider);
   return o?.models.some((e) => e.id === t.model) ? { ...t, modelProvider: o.id } : t;
-}
-async function codexUpdateConfigModelProvider(e) {
-  try {
-    let { codexHome: t } = await tp(`codex-home`, { params: { hostId: `local` } }),
-      n = t.includes(`\\`) && !t.includes(`/`) ? `\\` : `/`,
-      r = `${t.replace(/[\\/]+$/u, ``)}${n}config.toml`,
-      { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
-      a = i.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
-    await tp(`write-file`, { params: { hostId: `local`, path: r, contents: a } });
-    setTimeout(() => window.location.reload(), 500);
-  } catch (t) {
-    console.warn(`[codex-provider-patch] Failed to update config.toml model_provider:`, t);
-  }
-}
-function codexWriteProviderChoiceV4(e) {
-  try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
-  window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e).catch(() => {});
 }"""
 
 PICKER_V7_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
