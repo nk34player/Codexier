@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -30,8 +29,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 
 
 def _merged_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    # ponytail: shallow copy is safe — callers reassign keys rather than mutate
+    # default values in place (see setup_tui.SettingsScreen.action_toggle).
     result = {
-        key: copy.deepcopy(value)
+        key: value
         for key, value in DEFAULT_SETTINGS.items()
         if key != "windows"
     }

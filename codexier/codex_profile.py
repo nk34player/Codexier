@@ -40,13 +40,12 @@ def provider_route_id(provider: Provider) -> str:
     return f"codexier-{safe.strip('-') or 'provider'}"
 
 
-def provider_profile_id(provider: Provider) -> str:
-    """Compatibility alias for callers from the per-profile implementation."""
-    return provider_route_id(provider)
-
-
 def ensure_unique_model_ids(providers: tuple[Provider, ...]) -> None:
-    """Retained API: provider-first routing intentionally permits duplicate IDs."""
+    """Retained API: provider-first routing intentionally permits duplicate IDs.
+
+    Callers that previously validated uniqueness can safely drop this call
+    -- it has always been a no-op.
+    """
 
 
 def launch_command(profile: str = "codexier") -> list[str]:
@@ -283,14 +282,7 @@ def _merge_profile(
     result["tool_output_token_limit"] = 8000
     result["model_catalog_json"] = str(catalog_path.resolve())
     providers = result.setdefault("model_providers", {})
-    providers["codexier"] = {
-        "name": "Codexier",
-        "base_url": provider.base_url.rstrip("/") + "/",
-        "wire_api": "responses",
-        "wire_specification": "responses",
-        "experimental_bearer_token": provider.api_key,
-        "requires_openai_auth": False,
-    }
+    providers["codexier"] = _provider_route(provider)
     profiles = result.setdefault("profiles", {})
     profiles["codexier"] = {
         "name": "Codexier",

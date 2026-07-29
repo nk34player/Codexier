@@ -6,6 +6,9 @@ from typing import Any, Callable
 import httpx
 from urllib.parse import urlsplit, urlunsplit
 
+from .errors import ValidationError
+from .models import validate_base_url
+
 
 class ModelFetchError(Exception):
     """Live provider model discovery failed."""
@@ -18,12 +21,12 @@ class LiveModel:
 
 
 def _models_endpoint(base_url: str) -> str:
+    try:
+        validate_base_url(base_url)
+    except ValidationError as exc:
+        raise ModelFetchError(str(exc)) from exc
     value = base_url.strip().rstrip("/")
     parsed = urlsplit(value)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ModelFetchError("Base URL must be an HTTPS URL with a host.")
-    if parsed.username or parsed.password:
-        raise ModelFetchError("Base URL must not contain embedded credentials.")
     path = parsed.path.rstrip("/")
     if not path:
         path = "/v1"

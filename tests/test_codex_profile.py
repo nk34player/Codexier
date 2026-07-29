@@ -9,8 +9,7 @@ from codexier.codex_profile import (
     apply_codex_profiles,
     build_catalog,
     build_desktop_provider_config,
-    ensure_unique_model_ids,
-    provider_profile_id,
+    provider_route_id,
 )
 from codexier.errors import ConfigError
 from codexier.models import ModelDefinition, Provider
@@ -188,7 +187,7 @@ def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: P
     result = apply_codex_profiles((provider(), other), other, tmp_path / ".codex")
     config = tomllib.loads(result.config_path.read_text())
     catalog = json.loads(result.catalog_path.read_text())
-    assert provider_profile_id(other) == "codexier-other"
+    assert provider_route_id(other) == "codexier-other"
     assert config["model_provider"] == "codexier"
     assert config["codexier_provider_id"] == "other"
     assert set(config["model_providers"]) >= {
@@ -238,7 +237,6 @@ def test_duplicate_model_ids_are_disambiguated_by_provider_in_desktop_config(tmp
         "other", "Other", "https://other.example/v1", "secret",
         (ModelDefinition("gpt-5.2", "Different label"),), {},
     )
-    ensure_unique_model_ids((provider(), duplicate))
     result = apply_codex_profiles((provider(), duplicate), provider(), tmp_path / ".codex")
     desktop = json.loads(result.desktop_config_path.read_text())
     assert desktop["providers"][0]["models"][0]["id"] == "gpt-5.2"

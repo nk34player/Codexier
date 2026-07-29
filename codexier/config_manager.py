@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -17,7 +18,7 @@ def detect_config_target(explicit: Path | None = None) -> ConfigTarget:
     if explicit:
         path = explicit.expanduser()
         return _target_for_path(path)
-    codex_root = Path(__import__("os").environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+    codex_root = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
     json_path = codex_root / "config.json"
     toml_path = codex_root / "config.toml"
     legacy_toml_path = Path.home() / ".config/codex/config.toml"

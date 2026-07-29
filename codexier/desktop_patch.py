@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .errors import ConfigError
+from .backup import atomic_write
 from .patch_progress import PatchProgress, report
 
 
@@ -673,11 +674,11 @@ def restore_desktop_patch(
     except Exception as exc:
         raise ConfigError(f"Could not close the desktop app before restore: {exc}") from exc
     report(progress, "atomic replacement", "restoring app.asar from backup")
-    _atomic_replace(target.archive_path, source.read_bytes())
+    atomic_write(target.archive_path, source.read_bytes())
     if target.metadata_path:
         metadata = backup / target.metadata_path.name
         if metadata.is_file():
-            _atomic_replace(target.metadata_path, metadata.read_bytes())
+            atomic_write(target.metadata_path, metadata.read_bytes())
     report(progress, "verification", "verifying restored app.asar")
     if target.archive_path.read_bytes() != source.read_bytes():
         raise ConfigError(f"Restored app.asar does not match backup: {backup}")
@@ -689,10 +690,4 @@ def _copy(source: Path, destination: Path) -> None:
         raise ConfigError(f"Could not verify desktop backup: {source}")
 
 
-def _atomic_replace(path: Path, payload: bytes) -> None:
-    temporary = path.with_suffix(path.suffix + ".codexier-tmp")
-    try:
-        temporary.write_bytes(payload)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+

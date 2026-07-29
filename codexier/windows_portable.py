@@ -23,7 +23,7 @@ from typing import Any
 
 from .backup import atomic_write
 from .codex_profile import CodexProfileResult, apply_codex_profiles
-from .desktop_patch import PATCH_MARKER
+from .desktop_patch import PATCH_MARKER, _windows_path_is_within
 from .desktop_patch_macos import PatchError, asar_header_hash, contains_marker
 from .desktop_patch_windows import patch_windows_app
 from .errors import ConfigError
@@ -154,13 +154,7 @@ def _joined(root: Path, manifest_path: str) -> Path:
 
 
 def _within(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except (OSError, ValueError):
-        path_key = ntpath.normcase(ntpath.normpath(str(path))).casefold()
-        root_key = ntpath.normcase(ntpath.normpath(str(root))).casefold().rstrip("\\")
-        return path_key == root_key or path_key.startswith(root_key + "\\")
+    return _windows_path_is_within(path, root)
 
 
 def _resolve_manifest_entry(

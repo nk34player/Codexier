@@ -6,16 +6,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .errors import ValidationError
 from .model_client import LiveModel
-from .models import ModelDefinition, Provider
+from .models import ModelDefinition, Provider, validate_base_url
 
 
 def normalize_base_url(base_url: str) -> str:
+    validate_base_url(base_url)
     value = base_url.strip().rstrip("/")
     parsed = urlsplit(value)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ValidationError("Base URL must be an HTTPS URL with a host.")
-    if parsed.username or parsed.password:
-        raise ValidationError("Base URL must not contain embedded credentials.")
     path = parsed.path.rstrip("/")
     if path.endswith("/v1"):
         normalized_path = path
