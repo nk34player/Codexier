@@ -1048,31 +1048,45 @@ async function codexUpdateConfigModelProvider(e) {
       srcToken = srcSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/)?.[1];
     
     if (!srcBaseUrl || !srcToken) {
-      alert(`Codexier ERROR: Missing base_url or token in [model_providers.${e}]`);
+      alert(`Codexier ERROR: Missing base_url or token in [model_providers.${e}]\\nbaseUrl=${srcBaseUrl || 'MISSING'}\\ntoken=${srcToken ? 'present' : 'MISSING'}`);
       console.error(`[codex-provider-patch] base_url=${srcBaseUrl}, token=${srcToken ? 'present' : 'missing'}`);
       return;
     }
     
-    console.error(`[codex-provider-patch] copying: base_url=${srcBaseUrl}, token=${srcToken.substring(0,8)}...`);
+    console.error(`[codex-provider-patch] copying: base_url=${srcBaseUrl}, token=${srcToken.substring(0,10)}...`);
+    
+    let dstMatch = raw.match(/\[model_providers\.codexier\]([\s\S]*?)(?=\n\[|$)/);
+    if (!dstMatch) {
+      alert(`Codexier ERROR: [model_providers.codexier] section not found in config.toml`);
+      console.error(`[codex-provider-patch] destination section not found`);
+      return;
+    }
+    
+    let dstSection = dstMatch[0],
+      dstBaseUrl = dstSection.match(/base_url\s*=\s*"([^"]*)"/)?.[1],
+      dstToken = dstSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/)?.[1];
+    
+    console.error(`[codex-provider-patch] current codexier route: base_url=${dstBaseUrl}, token=${dstToken?.substring(0,10)}...`);
     
     let updated = raw
       .replace(
-        /(^\[model_providers\.codexier\]\s*\n(?:[^\[\n]*\n)*?base_url\s*=\s*)"[^"]*"/m,
+        /(\[model_providers\.codexier\][\s\S]*?base_url\s*=\s*)"[^"]*"/,
         `$1"${srcBaseUrl}"`
       )
       .replace(
-        /(^\[model_providers\.codexier\]\s*\n(?:[^\[\n]*\n)*?experimental_bearer_token\s*=\s*)"[^"]*"/m,
+        /(\[model_providers\.codexier\][\s\S]*?experimental_bearer_token\s*=\s*)"[^"]*"/,
         `$1"${srcToken}"`
       );
     
     if (updated === raw) {
-      alert(`Codexier ERROR: Failed to update [model_providers.codexier] - regex didn't match`);
+      alert(`Codexier ERROR: Failed to update [model_providers.codexier] credentials\\nRegex didn't match the TOML structure`);
       console.error(`[codex-provider-patch] TOML update failed - no changes made`);
       return;
     }
     
+    console.error(`[codex-provider-patch] TOML updated, writing to disk...`);
     await tp(`write-file`, { params: { hostId: `local`, path, contents: updated } });
-    console.error(`[codex-provider-patch] config.toml updated successfully`);
+    console.error(`[codex-provider-patch] config.toml written successfully`);
     setTimeout(() => window.location.reload(), 1000);
   } catch (err) {
     console.error(`[codex-provider-patch] switch failed:`, String(err));
