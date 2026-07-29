@@ -1055,36 +1055,27 @@ async function codexUpdateConfigModelProvider(e) {
     
     console.error(`[codex-provider-patch] copying: base_url=${srcBaseUrl}, token=${srcToken.substring(0,10)}...`);
     
-    let dstMatch = raw.match(/\[model_providers\.codexier\]([\s\S]*?)(?=\n\[|$)/);
-    if (!dstMatch) {
-      alert(`Codexier ERROR: [model_providers.codexier] section not found in config.toml`);
-      console.error(`[codex-provider-patch] destination section not found`);
+    let lines = raw.split(`\n`), inCodexier = false, baseUrlLine = -1, tokenLine = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim() === `[model_providers.codexier]`) inCodexier = true;
+      else if (inCodexier && lines[i].trim().startsWith(`[`)) break;
+      else if (inCodexier) {
+        if (lines[i].match(/^\s*base_url\s*=/)) baseUrlLine = i;
+        else if (lines[i].match(/^\s*experimental_bearer_token\s*=/)) tokenLine = i;
+      }
+    }
+    
+    if (baseUrlLine === -1 || tokenLine === -1) {
+      alert(`Codexier ERROR: Could not locate base_url or token lines in [model_providers.codexier]\\nbaseUrlLine=${baseUrlLine}, tokenLine=${tokenLine}`);
+      console.error(`[codex-provider-patch] line-based search failed`);
       return;
     }
     
-    let dstSection = dstMatch[0],
-      dstBaseUrl = dstSection.match(/base_url\s*=\s*"([^"]*)"/)?.[1],
-      dstToken = dstSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/)?.[1];
+    lines[baseUrlLine] = lines[baseUrlLine].replace(/"[^"]*"/, `"${srcBaseUrl}"`);
+    lines[tokenLine] = lines[tokenLine].replace(/"[^"]*"/, `"${srcToken}"`);
+    let updated = lines.join(`\n`);
     
-    console.error(`[codex-provider-patch] current codexier route: base_url=${dstBaseUrl}, token=${dstToken?.substring(0,10)}...`);
-    
-    let updated = raw
-      .replace(
-        /(\[model_providers\.codexier\][\s\S]*?base_url\s*=\s*)"[^"]*"/,
-        `$1"${srcBaseUrl}"`
-      )
-      .replace(
-        /(\[model_providers\.codexier\][\s\S]*?experimental_bearer_token\s*=\s*)"[^"]*"/,
-        `$1"${srcToken}"`
-      );
-    
-    if (updated === raw) {
-      alert(`Codexier ERROR: Failed to update [model_providers.codexier] credentials\\nRegex didn't match the TOML structure`);
-      console.error(`[codex-provider-patch] TOML update failed - no changes made`);
-      return;
-    }
-    
-    console.error(`[codex-provider-patch] TOML updated, writing to disk...`);
+    console.error(`[codex-provider-patch] TOML updated via line replacement, writing to disk...`);
     await tp(`write-file`, { params: { hostId: `local`, path, contents: updated } });
     console.error(`[codex-provider-patch] config.toml written successfully`);
     setTimeout(() => window.location.reload(), 1000);
