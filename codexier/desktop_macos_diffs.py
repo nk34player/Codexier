@@ -1028,22 +1028,44 @@ function CodexCustomProviderPickerSection() {
   });
 }
 async function codexUpdateConfigModelProvider(e) {
+  console.error(`[codex-provider-patch] switching to provider: ${e}`);
+  let writeOk = false;
   try {
-    let { codexHome: t } = await tp(`codex-home`, { params: { hostId: `local` } }),
-      n = t.includes(`\\`) && !t.includes(`/`) ? `\\` : `/`,
-      r = `${t.replace(/[\\/]+$/u, ``)}${n}config.toml`,
-      { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
-      a = i.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
-    await tp(`write-file`, { params: { hostId: `local`, path: r, contents: a } });
-    setTimeout(() => window.location.reload(), 500);
-  } catch (t) {
-    console.warn(`[codex-provider-patch] Failed to update config.toml model_provider:`, t);
+    await tp(`config/batchWrite`, { params: { hostId: `local` }, model_provider: e });
+    writeOk = true;
+    console.error(`[codex-provider-patch] config/batchWrite succeeded`);
+  } catch (t1) {
+    console.error(`[codex-provider-patch] config/batchWrite failed:`, String(t1));
+    try {
+      let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
+        sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
+        path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
+        { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } }),
+        patched = raw.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
+      if (patched === raw) {
+        console.error(`[codex-provider-patch] model_provider line not found in config.toml`);
+      } else {
+        await tp(`write-file`, { params: { hostId: `local`, path, contents: patched } });
+        writeOk = true;
+        console.error(`[codex-provider-patch] write-file succeeded`);
+      }
+    } catch (t2) {
+      console.error(`[codex-provider-patch] write-file also failed:`, String(t2));
+    }
+  }
+  if (writeOk) {
+    console.error(`[codex-provider-patch] reloading to restart Codex with new provider`);
+    setTimeout(() => window.location.reload(), 600);
+  } else {
+    console.error(`[codex-provider-patch] all write methods failed — provider NOT switched`);
   }
 }
 function codexWriteProviderChoiceV4(e) {
   try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e).catch(() => {});
+  codexUpdateConfigModelProvider(e).catch((err) => {
+    console.error(`[codex-provider-patch] unhandled error:`, String(err));
+  });
 }"""
 
 CODEX_26721_4979_LAYOUT = "Codex 26.721.4979 provider-first picker"
