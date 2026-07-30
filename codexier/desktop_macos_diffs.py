@@ -1060,59 +1060,52 @@ function CodexCustomProviderPickerSection() {
 }
 async function codexVerifyProviderSwitch(e) {
   try {
-    let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
-      sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
-      path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
-      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } });
-    let liveProvider = raw.match(/^model_provider\s*=\s*"([^"]*)"/m)?.[1] ?? `(unknown)`;
-    let liveModel = raw.match(/^\s*model\s*=\s*"([^"]*)"/m)?.[1] ?? `(unknown)`;
-    let sectionMatch = raw.match(new RegExp(`\\[model_providers\\.${liveProvider.replace(/[.*+?^${}()|[\]\\]/g, `\\$&`)}\\]([\\s\\S]*?)(?=\\n\\[|$)`));
-    let liveBaseUrl = sectionMatch?.[1]?.match(/base_url\s*=\s*"([^"]*)"/)?.[1] ?? `(unknown)`;
+    let res = await Rf(`read-config-for-host`, { hostId: `local`, includeLayers: !1, cwd: null });
+    let cfg = res?.config ?? {};
+    let liveProvider = cfg.model_provider ?? `(unknown)`;
+    let liveModel = cfg.model ?? `(unknown)`;
+    let providers = cfg.model_providers ?? {};
+    let section = providers[e] ?? providers[liveProvider] ?? {};
+    let liveBaseUrl = section.base_url ?? `(unknown)`;
     let baseUrlShort = liveBaseUrl.length > 40 ? liveBaseUrl.substring(0, 37) + `...` : liveBaseUrl;
     let match = liveProvider === e;
     let icon = match ? `OK` : `MISMATCH`;
     let msg =
       `Codexier Provider Switch — ${icon}\n\n` +
       `Selected (localStorage): ${e}\n` +
-      `config.toml model_provider: ${liveProvider}\n` +
-      `config.toml model: ${liveModel}\n` +
-      `base_url: ${baseUrlShort}\n\n`;
+      `Live model_provider: ${liveProvider}\n` +
+      `Live model: ${liveModel}\n` +
+      `Live base_url: ${baseUrlShort}\n\n`;
     if (match) {
-      msg += `config.toml is correct. If requests still go to wrong provider, restart ChatGPT to force Codex CLI to re-read config.`;
+      msg += `Provider is active. Requests will route through ${e}.`;
     } else {
-      msg += `MISMATCH! config.toml has ${liveProvider} but you selected ${e}.\n` +
-        `The write may have failed. Try switching again.`;
+      msg += `MISMATCH! Selected ${e} but Codex CLI is using ${liveProvider}.\n` +
+        `Restart ChatGPT to force Codex CLI to re-read config.`;
     }
     alert(msg);
     console.error(`[codex-provider-patch] verify: selected=${e} live=${liveProvider} model=${liveModel} base_url=${baseUrlShort} match=${match}`);
   } catch (err) {
     console.error(`[codex-provider-patch] verify failed:`, String(err));
-    alert(`Codexier: Could not read config.toml after switch.\nError: ${String(err)}`);
+    alert(`Codexier: Could not read live config after switch.\nError: ${String(err)}`);
   }
 }
-async function codexUpdateConfigModelProvider(e, reload = true) {
+async function codexUpdateConfigModelProvider(e, reload = false) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
   try {
-    let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
-      sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
-      path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
-      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } }),
-      patched = raw.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
-    if (patched === raw) {
-      console.error(`[codex-provider-patch] model_provider line not found in config.toml`);
-      alert(`Codexier: Could not find model_provider line in config.toml.\nProvider NOT switched.`);
-      return;
-    }
-    await tp(`write-file`, { params: { hostId: `local`, path, contents: patched } });
-    console.error(`[codex-provider-patch] config.toml written: model_provider=${e}`);
+    await Rf(`batch-write-config-value`, {
+      hostId: `local`,
+      edits: [{ keyPath: `model_provider`, value: e, mergeStrategy: `upsert` }],
+      filePath: null,
+      expectedVersion: null,
+    });
+    console.error(`[codex-provider-patch] batch-write-config-value succeeded: model_provider=${e}`);
+    await codexVerifyProviderSwitch(e);
     if (reload) {
       console.error(`[codex-provider-patch] reloading to apply new provider`);
       setTimeout(() => window.location.reload(), 500);
-    } else {
-      await codexVerifyProviderSwitch(e);
     }
   } catch (err) {
-    console.error(`[codex-provider-patch] switch failed:`, String(err));
+    console.error(`[codex-provider-patch] batch-write-config-value failed:`, String(err));
     alert(`Codexier: Failed to switch provider to ${e}.\nError: ${String(err)}`);
   }
 }
@@ -1123,24 +1116,15 @@ async function codexSyncConfigOnLoad() {
     let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
     if (!stored) return;
     console.error(`[codex-provider-patch] startup sync for provider: ${stored}`);
-    let reloadKey = `codex.startupSyncReload.${stored}`;
-    let alreadyReloaded = window.localStorage.getItem(reloadKey) === `1`;
-    await codexUpdateConfigModelProvider(stored, !alreadyReloaded);
-    if (!alreadyReloaded) {
-      try { window.localStorage.setItem(reloadKey, `1`); } catch {}
-    }
+    await codexUpdateConfigModelProvider(stored, false);
   } catch (err) {
     console.error(`[codex-provider-patch] startup sync failed:`, String(err));
   }
 }
 function codexWriteProviderChoiceV4(e) {
-  try {
-    window.localStorage.setItem(`codex.customProviderSelection.v2`, e);
-    let reloadKey = `codex.startupSyncReload.${e}`;
-    window.localStorage.removeItem(reloadKey);
-  } catch {}
+  try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e, true).catch((err) => {
+  codexUpdateConfigModelProvider(e, false).catch((err) => {
     console.error(`[codex-provider-patch] unhandled error:`, String(err));
   });
 }"""
