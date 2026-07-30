@@ -120,15 +120,14 @@ def test_generated_desktop_patch_keeps_custom_threads_visible_and_routes_new_sta
 
 def test_patch_uses_config_batchwrite_for_live_provider_switch():
     patch_source = "\n".join((CENTRAL_V7_JAVASCRIPT, PICKER_V7_JAVASCRIPT))
-    assert "codexSyncConfigOnLoad" in patch_source
-    assert "batch-write-config-value" in patch_source
-    assert "read-config-for-host" in patch_source
-    assert "keyPath: `model_provider`" in patch_source
-    assert "write-file" not in patch_source
-    assert "config/batchWrite" not in patch_source
-    assert "config/read" not in patch_source
-    assert "codexVerifyProviderSwitch" in patch_source
-    assert "Live model_provider" in patch_source
+    assert "modelProvider: i.id" in patch_source
+    assert "base_url: i.base_url" in patch_source
+    assert "experimental_bearer_token: i.token" in patch_source
+    assert "cfg.model_provider = i.id" in patch_source
+    assert "cfg[`model_providers.${i.id}`]" in patch_source
+    assert "codexSyncConfigOnLoad" not in patch_source
+    assert "codexUpdateConfigModelProvider" not in patch_source
+    assert "codexVerifyProviderSwitch" not in patch_source
 
 
 def test_single_patch_payload_has_unversioned_marker_and_authoritative_routing():

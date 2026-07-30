@@ -869,10 +869,19 @@ async function codexPatchAppServerParams(e, t) {
   let n = await codexLoadProviderRoutingConfigV4(!0), r;
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
-  if (i == null) return t;
+  if (i == null || !i.base_url || !i.token) return t;
   let out = { ...t, modelProvider: i.id };
   let hasModel = typeof t.model === `string` && i.models.some((e) => e.id === t.model);
   if (!hasModel && i.models.length > 0) out.model = i.models[0].id;
+  let cfg = (t.config != null && typeof t.config === `object`) ? { ...t.config } : {};
+  cfg.model_provider = i.id;
+  cfg[`model_providers.${i.id}`] = {
+    name: i.label,
+    base_url: i.base_url,
+    experimental_bearer_token: i.token,
+    wire_api: `responses`,
+  };
+  out.config = cfg;
   return out;
 }"""
 
@@ -940,26 +949,25 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         r = `${e.replace(/[\\/]+$/u, ``)}${n}desktop-model-providers.json`,
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
-      try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
-      codexSyncConfigOnLoad().catch(() => {});
-      return (
-        (t.config = a),
-        (t.error = null),
-        (t.loaded = !0),
-        window.dispatchEvent(new Event(`codex.customProviderRouting.v4.change`)),
-        a
-      );
-    } catch (e) {
-      return (
-        (t.error = e instanceof Error ? e.message : String(e)),
-        (t.loaded = !0),
-        window.dispatchEvent(new Event(`codex.customProviderRouting.v4.change`)),
-        t.config
-      );
-    } finally {
-      t.promise = null;
-    }
-  })(), t.promise);
+       try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
+       return (
+         (t.config = a),
+         (t.error = null),
+         (t.loaded = !0),
+         window.dispatchEvent(new Event(`codex.customProviderRouting.v4.change`)),
+         a
+       );
+     } catch (e) {
+       return (
+         (t.error = e instanceof Error ? e.message : String(e)),
+         (t.loaded = !0),
+         window.dispatchEvent(new Event(`codex.customProviderRouting.v4.change`)),
+         t.config
+       );
+     } finally {
+       t.promise = null;
+     }
+   })(), t.promise);
 }
 function codexReadProviderChoiceV4(e) {
   try {
@@ -1058,75 +1066,10 @@ function CodexCustomProviderPickerSection() {
     ],
   });
 }
-async function codexVerifyProviderSwitch(e) {
-  try {
-    let res = await Rf(`read-config-for-host`, { hostId: `local`, includeLayers: !1, cwd: null });
-    let cfg = res?.config ?? {};
-    let liveProvider = cfg.model_provider ?? `(unknown)`;
-    let liveModel = cfg.model ?? `(unknown)`;
-    let providers = cfg.model_providers ?? {};
-    let section = providers[e] ?? providers[liveProvider] ?? {};
-    let liveBaseUrl = section.base_url ?? `(unknown)`;
-    let baseUrlShort = liveBaseUrl.length > 40 ? liveBaseUrl.substring(0, 37) + `...` : liveBaseUrl;
-    let match = liveProvider === e;
-    let icon = match ? `OK` : `MISMATCH`;
-    let msg =
-      `Codexier Provider Switch — ${icon}\n\n` +
-      `Selected (localStorage): ${e}\n` +
-      `Live model_provider: ${liveProvider}\n` +
-      `Live model: ${liveModel}\n` +
-      `Live base_url: ${baseUrlShort}\n\n`;
-    if (match) {
-      msg += `Provider is active. Requests will route through ${e}.`;
-    } else {
-      msg += `MISMATCH! Selected ${e} but Codex CLI is using ${liveProvider}.\n` +
-        `Restart ChatGPT to force Codex CLI to re-read config.`;
-    }
-    alert(msg);
-    console.error(`[codex-provider-patch] verify: selected=${e} live=${liveProvider} model=${liveModel} base_url=${baseUrlShort} match=${match}`);
-  } catch (err) {
-    console.error(`[codex-provider-patch] verify failed:`, String(err));
-    alert(`Codexier: Could not read live config after switch.\nError: ${String(err)}`);
-  }
-}
-async function codexUpdateConfigModelProvider(e, reload = false) {
-  console.error(`[codex-provider-patch] switching to provider: ${e}`);
-  try {
-    await Rf(`batch-write-config-value`, {
-      hostId: `local`,
-      edits: [{ keyPath: `model_provider`, value: e, mergeStrategy: `upsert` }],
-      filePath: null,
-      expectedVersion: null,
-    });
-    console.error(`[codex-provider-patch] batch-write-config-value succeeded: model_provider=${e}`);
-    await codexVerifyProviderSwitch(e);
-    if (reload) {
-      console.error(`[codex-provider-patch] reloading to apply new provider`);
-      setTimeout(() => window.location.reload(), 500);
-    }
-  } catch (err) {
-    console.error(`[codex-provider-patch] batch-write-config-value failed:`, String(err));
-    alert(`Codexier: Failed to switch provider to ${e}.\nError: ${String(err)}`);
-  }
-}
-async function codexSyncConfigOnLoad() {
-  if (window.__codexStartupSyncDone) return;
-  window.__codexStartupSyncDone = true;
-  try {
-    let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
-    if (!stored) return;
-    console.error(`[codex-provider-patch] startup sync for provider: ${stored}`);
-    await codexUpdateConfigModelProvider(stored, false);
-  } catch (err) {
-    console.error(`[codex-provider-patch] startup sync failed:`, String(err));
-  }
-}
 function codexWriteProviderChoiceV4(e) {
   try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e, false).catch((err) => {
-    console.error(`[codex-provider-patch] unhandled error:`, String(err));
-  });
+  void Rf(`clear-prewarmed-threads-for-host`, { hostId: `local` }).catch(() => {});
 }"""
 
 CODEX_26721_4979_LAYOUT = "Codex 26.721.4979 provider-first picker"
