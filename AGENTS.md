@@ -31,6 +31,10 @@ Check that all package files compile:
 
 Run the application through the platform launcher, for example `./codexier.command` on macOS or `./codexier.sh` on Linux.
 
+## Tooling
+
+Use fff MCP tools for file and content search instead of grep/find.
+
 ## Coding Style & Naming Conventions
 
 Use Python 3.11+ with four-space indentation, type hints, and `from __future__ import annotations` for new modules. Prefer small, explicit functions and immutable dataclasses where they match existing code. Use `snake_case` for functions and variables, `PascalCase` for classes, and `UPPER_SNAKE_CASE` for constants. Keep platform branching isolated and preserve user-facing validation and error messages.

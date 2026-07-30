@@ -59,24 +59,46 @@ PATCH_MARKER = b"__codexDesktopModelProvidersPatch"
 PATCH_MARKER_PREFIX = b"__codexDesktopModelProvidersPatch"
 ASAR_PACKAGE = "@electron/asar@3.2.10"
 
+# A short content tag embedded right after the marker. When the JS payloads
+# change, this tag changes too. patch_status compares the tag found in the
+# installed app.asar against the expected tag: a mismatch means the installed
+# patch is stale and the user should be prompted to re-apply.
+_PATCH_CONTENT_TAG_CACHE: bytes | None = None
+
+
+def patch_content_tag() -> bytes:
+    """Return the content tag for the current JS payloads (computed lazily)."""
+    global _PATCH_CONTENT_TAG_CACHE
+    if _PATCH_CONTENT_TAG_CACHE is None:
+        import hashlib
+        digest = hashlib.sha256(
+            (CENTRAL_V7_JAVASCRIPT + "\n" + PICKER_V7_JAVASCRIPT).encode("utf-8")
+        ).hexdigest()[:12]
+        _PATCH_CONTENT_TAG_CACHE = b"v" + digest.encode("ascii")
+    return _PATCH_CONTENT_TAG_CACHE
+
 
 def content_has_current_patch(content: bytes) -> bool:
-    """True when the unversioned marker is present (not ...PatchV*)."""
-    needle = PATCH_MARKER
-    start = 0
-    while True:
-        index = content.find(needle, start)
-        if index < 0:
-            return False
-        end = index + len(needle)
-        if end >= len(content) or content[end : end + 1] != b"V":
-            return True
-        start = end
+    """True when the unversioned marker with the current content tag is present."""
+    needle = PATCH_MARKER + patch_content_tag()
+    return needle in content
 
 
 def content_has_any_patch(content: bytes) -> bool:
     """True for current or any legacy ...Patch / ...PatchV* install."""
     return PATCH_MARKER_PREFIX in content
+
+
+def content_has_stale_patch(content: bytes) -> bool:
+    """True when a patch marker exists but the content tag differs.
+
+    This detects installs that carry the unversioned marker (or a legacy
+    ...PatchV* marker) but NOT the current content tag, meaning the
+    JavaScript payloads changed since the app was patched.
+    """
+    if content_has_current_patch(content):
+        return False
+    return content_has_any_patch(content)
 
 
 CENTRAL_DIFF = r"""@@ -4631,6 +4631,146 @@
@@ -799,10 +821,14 @@ function codexNormalizeProviderRoutingConfigV4(e) {
         throw Error(`Provider models must have unique ids and labels`);
       (i.add(n), a.push({ id: n, label: r }));
     }
+    let bu = typeof r.base_url === `string` ? r.base_url : ``,
+      tk = typeof r.token === `string` ? r.token : ``;
     t.push({
       id: e,
       label: typeof r.label === `string` && r.label.trim().length > 0 ? r.label.trim() : e,
       description: typeof r.description === `string` ? r.description.trim() : ``,
+      base_url: bu,
+      token: tk,
       models: a,
     });
   }
@@ -842,12 +868,12 @@ async function codexPatchAppServerParams(e, t) {
   if (e !== `thread/start` || t == null || typeof t !== `object`) return t;
   let n = await codexLoadProviderRoutingConfigV4(!0), r;
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
-  let i = n.providers.find((e) => e.id === r);
-  if (i != null) return { ...t, modelProvider: i.id };
-  let a = n.providers.filter((e) => e.models.some((e) => e.id === t.model));
-  if (a.length === 1) return { ...t, modelProvider: a[0].id };
-  let o = n.providers.find((e) => e.id === n.defaultProvider);
-  return o?.models.some((e) => e.id === t.model) ? { ...t, modelProvider: o.id } : t;
+  let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
+  if (i == null) return t;
+  let out = { ...t, modelProvider: `codexier` };
+  let hasModel = typeof t.model === `string` && i.models.some((e) => e.id === t.model);
+  if (!hasModel && i.models.length > 0) out.model = i.models[0].id;
+  return out;
 }"""
 
 PICKER_V7_JAVASCRIPT = r"""function codexPickerProviderRoutingFallbackV4() {
@@ -883,10 +909,14 @@ function codexPickerNormalizeProviderRoutingConfigV4(e) {
         throw Error(`Provider models must have unique ids and labels`);
       (i.add(n), a.push({ id: n, label: r }));
     }
+    let bu = typeof r.base_url === `string` ? r.base_url : ``,
+      tk = typeof r.token === `string` ? r.token : ``;
     t.push({
       id: e,
       label: typeof r.label === `string` && r.label.trim().length > 0 ? r.label.trim() : e,
       description: typeof r.description === `string` ? r.description.trim() : ``,
+      base_url: bu,
+      token: tk,
       models: a,
     });
   }
@@ -911,6 +941,7 @@ async function codexPickerLoadProviderRoutingConfigV4(e = !1) {
         { contents: i } = await tp(`read-file`, { params: { hostId: `local`, path: r } }),
         a = codexPickerNormalizeProviderRoutingConfigV4(JSON.parse(i));
       try { window.localStorage.setItem(`codex.customProviderRouting.v4`, JSON.stringify(a)); } catch {}
+      codexSyncConfigOnLoad().catch(() => {});
       return (
         (t.config = a),
         (t.error = null),
@@ -1027,35 +1058,22 @@ function CodexCustomProviderPickerSection() {
     ],
   });
 }
-async function codexUpdateConfigModelProvider(e) {
+async function codexUpdateConfigModelProvider(e, reload = true) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
-  alert(`Codexier: Switching provider to ${e}. ChatGPT will reload in 1 second.`);
   try {
+    let cfg = await codexLoadProviderRoutingConfigV4(!0);
+    let p = cfg.providers.find((x) => x.id === e) ?? cfg.providers.find((x) => x.id === cfg.defaultProvider);
+    if (p == null || !p.base_url || !p.token) {
+      console.error(`[codex-provider-patch] no base_url/token for provider ${e} in desktop-model-providers.json`);
+      return;
+    }
+    let newModel = p.models.length > 0 ? p.models[0].id : ``;
     let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
       sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
       path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
-      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } });
-    
-    let srcMatch = raw.match(new RegExp(`\\[model_providers\\.${e.replace(/[.*+?^${}()|[\]\\]/g, `\\$&`)}\\]([\\s\\S]*?)(?=\\n\\[|$)`));
-    if (!srcMatch) {
-      alert(`Codexier ERROR: Provider route [model_providers.${e}] not found in config.toml`);
-      console.error(`[codex-provider-patch] source section not found for ${e}`);
-      return;
-    }
-    
-    let srcSection = srcMatch[1],
-      srcBaseUrl = srcSection.match(/base_url\s*=\s*"([^"]*)"/)?.[1],
-      srcToken = srcSection.match(/experimental_bearer_token\s*=\s*"([^"]*)"/)?.[1];
-    
-    if (!srcBaseUrl || !srcToken) {
-      alert(`Codexier ERROR: Missing base_url or token in [model_providers.${e}]\\nbaseUrl=${srcBaseUrl || 'MISSING'}\\ntoken=${srcToken ? 'present' : 'MISSING'}`);
-      console.error(`[codex-provider-patch] base_url=${srcBaseUrl}, token=${srcToken ? 'present' : 'missing'}`);
-      return;
-    }
-    
-    console.error(`[codex-provider-patch] copying: base_url=${srcBaseUrl}, token=${srcToken.substring(0,10)}...`);
-    
-    let lines = raw.split(`\n`), inCodexier = false, baseUrlLine = -1, tokenLine = -1;
+      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } }),
+      lines = raw.split(`\n`),
+      inCodexier = false, baseUrlLine = -1, tokenLine = -1, modelLine = -1;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].trim() === `[model_providers.codexier]`) inCodexier = true;
       else if (inCodexier && lines[i].trim().startsWith(`[`)) break;
@@ -1063,31 +1081,44 @@ async function codexUpdateConfigModelProvider(e) {
         if (lines[i].match(/^\s*base_url\s*=/)) baseUrlLine = i;
         else if (lines[i].match(/^\s*experimental_bearer_token\s*=/)) tokenLine = i;
       }
+      if (lines[i].match(/^\s*model\s*=\s*"/) && !inCodexier) modelLine = i;
     }
-    
     if (baseUrlLine === -1 || tokenLine === -1) {
-      alert(`Codexier ERROR: Could not locate base_url or token lines in [model_providers.codexier]\\nbaseUrlLine=${baseUrlLine}, tokenLine=${tokenLine}`);
-      console.error(`[codex-provider-patch] line-based search failed`);
+      console.error(`[codex-provider-patch] could not locate base_url/token lines in [model_providers.codexier]`);
       return;
     }
-    
-    lines[baseUrlLine] = lines[baseUrlLine].replace(/"[^"]*"/, `"${srcBaseUrl}"`);
-    lines[tokenLine] = lines[tokenLine].replace(/"[^"]*"/, `"${srcToken}"`);
-    let updated = lines.join(`\n`);
-    
-    console.error(`[codex-provider-patch] TOML updated via line replacement, writing to disk...`);
-    await tp(`write-file`, { params: { hostId: `local`, path, contents: updated } });
-    console.error(`[codex-provider-patch] config.toml written successfully`);
-    setTimeout(() => window.location.reload(), 1000);
+    lines[baseUrlLine] = lines[baseUrlLine].replace(/"[^"]*"/, `"${p.base_url}"`);
+    lines[tokenLine] = lines[tokenLine].replace(/"[^"]*"/, `"${p.token}"`);
+    if (newModel && modelLine >= 0) {
+      lines[modelLine] = lines[modelLine].replace(/"[^"]*"/, `"${newModel}"`);
+      console.error(`[codex-provider-patch] model set to ${newModel}`);
+    }
+    await tp(`write-file`, { params: { hostId: `local`, path, contents: lines.join(`\n`) } });
+    console.error(`[codex-provider-patch] config.toml written: base_url + token + model`);
+    if (reload) {
+      console.error(`[codex-provider-patch] reloading to apply new credentials`);
+      setTimeout(() => window.location.reload(), 500);
+    }
   } catch (err) {
     console.error(`[codex-provider-patch] switch failed:`, String(err));
-    alert(`Codexier ERROR: ${String(err)}`);
+  }
+}
+async function codexSyncConfigOnLoad() {
+  if (window.__codexStartupSyncDone) return;
+  window.__codexStartupSyncDone = true;
+  try {
+    let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
+    if (!stored) return;
+    console.error(`[codex-provider-patch] startup sync for provider: ${stored}`);
+    await codexUpdateConfigModelProvider(stored, false);
+  } catch (err) {
+    console.error(`[codex-provider-patch] startup sync failed:`, String(err));
   }
 }
 function codexWriteProviderChoiceV4(e) {
   try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e).catch((err) => {
+  codexUpdateConfigModelProvider(e, true).catch((err) => {
     console.error(`[codex-provider-patch] unhandled error:`, String(err));
   });
 }"""

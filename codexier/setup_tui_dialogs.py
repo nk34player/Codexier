@@ -183,14 +183,15 @@ class ReapplyConfirmScreen(ConfirmationDialog):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="reapply-confirm"):
-            yield Static("RE-APPLY CUSTOM PATCHES")
+            yield Static("OLD PATCH VERSION DETECTED")
             yield Static(
-                "This app is already patched. Re-applying requires restoring the "
-                "immutable original backup first, then applying the selected patches."
+                "You are running an old version of the desktop patches. "
+                "Re-apply the latest patches now, or skip to keep the "
+                "current install."
             )
             with Horizontal(id="reapply-actions"):
-                yield Button("Restore original and re-apply", id="reapply", variant="error")
-                yield Button("Cancel", id="cancel")
+                yield Button("Reapply", id="reapply", variant="error")
+                yield Button("Skip", id="cancel")
 
     def on_mount(self) -> None:
         self.query_one("#cancel", Button).focus()

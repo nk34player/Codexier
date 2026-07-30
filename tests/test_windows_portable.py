@@ -565,8 +565,9 @@ def test_official_sync_exports_one_provider_and_launches_aumid(tmp_path: Path, m
     models = json.loads(result.profile.catalog_path.read_text())["models"]
     assert launched == [package.aumid]
     assert config["profiles"]["codexier"]["name"] == "Codexier"
-    assert set(key for key in config["model_providers"] if key.startswith("codexier-")) == {"codexier-two"}
-    assert config["model_providers"]["codexier-two"]["name"] == "Codexier"
+    # Single shared route — no per-provider codexier-{id} TOML sections.
+    assert set(key for key in config["model_providers"] if key.startswith("codexier-")) == set()
+    assert config["model_providers"]["codexier"]["name"] == "Codexier"
     assert [item["id"] for item in desktop["providers"]] == ["codexier-two"]
     assert desktop["providers"][0]["description"] == "Custom Provider"
     assert [item["slug"] for item in models] == ["two-model"]
@@ -636,11 +637,9 @@ def test_portable_sync_exports_all_enabled_providers_and_launches_copy(
     desktop = json.loads(result.profile.desktop_config_path.read_text())
     assert launched == [executable]
     assert shortcuts == [executable]
-    assert set(key for key in config["model_providers"] if key.startswith("codexier-")) == {"codexier-one", "codexier-two"}
-    assert all(
-        config["model_providers"][route]["name"] == "Codexier"
-        for route in ("codexier-one", "codexier-two")
-    )
+    # Single shared route — no per-provider codexier-{id} TOML sections.
+    assert set(key for key in config["model_providers"] if key.startswith("codexier-")) == set()
+    assert config["model_providers"]["codexier"]["name"] == "Codexier"
     assert [item["id"] for item in desktop["providers"]] == ["codexier-one", "codexier-two"]
     assert all(item["description"] == "Custom Provider" for item in desktop["providers"])
     assert all(item["id"] != "openai" for item in desktop["providers"])

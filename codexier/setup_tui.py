@@ -513,20 +513,52 @@ class ProviderManagerApp(App[Provider | ProviderManagerResult | None]):
 
     def _begin_interactive_sync(self, provider: Provider) -> None:
         try:
-            from .desktop_patch import default_target
+            from .desktop_patch import default_target, patch_status
             from .desktop_patch_macos import find_target_app_processes
 
-            app = default_target("darwin").archive_path.parents[2]
+            target = default_target("darwin")
+            app = target.archive_path.parents[2]
             processes = find_target_app_processes(app)
         except (ConfigError, OSError, PatchError) as exc:
             status = self.query_one("#status", Static)
             status.update(str(exc))
             status.add_class("error")
             return
+        # Detect a stale patch (same marker, different JS payload). If the
+        # installed patch does not carry the current content tag, prompt the
+        # user to re-apply before proceeding with the sync.
+        try:
+            pre_status = patch_status(target)
+        except (ConfigError, OSError, PatchError):
+            pre_status = None
+        if pre_status is not None and pre_status.reapply_required:
+            self.push_screen(
+                ReapplyConfirmScreen(),
+                lambda confirmed: self._stale_patch_resolved(
+                    provider, confirmed, processes
+                ),
+            )
+            return
         if processes:
             self.push_screen(
                 ForceCloseConfirmScreen(tuple(pid for pid, _ in processes)),
                 lambda confirmed: self._force_close_sync_confirmed(provider, confirmed),
+            )
+            return
+        self.run_worker(self._run_interactive_sync(provider, force_close=False), exclusive=True)
+
+    def _stale_patch_resolved(
+        self, provider: Provider, confirmed: bool | None, processes: object
+    ) -> None:
+        if not confirmed:
+            # User chose Skip — proceed with sync but do not touch the app bundle.
+            self.run_worker(self._run_interactive_sync(provider, force_close=False, skip_patch=True), exclusive=True)
+            return
+        # User chose Reapply — proceed normally (sync + patch re-apply).
+        if processes:
+            self.push_screen(
+                ForceCloseConfirmScreen(tuple(pid for pid, _ in processes)),
+                lambda c: self._force_close_sync_confirmed(provider, c),
             )
             return
         self.run_worker(self._run_interactive_sync(provider, force_close=False), exclusive=True)
@@ -542,13 +574,15 @@ class ProviderManagerApp(App[Provider | ProviderManagerResult | None]):
         if self.progress_screen is not None:
             self.progress_screen.update_progress(percent, detail)
 
-    def _sync_and_patch(self, provider: Provider, force_close: bool) -> str:
+    def _sync_and_patch(self, provider: Provider, force_close: bool, skip_patch: bool = False) -> str:
         from .codex_profile import apply_codex_profiles
         from .desktop_patch import apply_desktop_patch, default_target
         from .desktop_patch_macos import gracefully_close_target_app_processes
 
         self._interactive_progress(5, "sync: writing the shared Codexier profile")
         apply_codex_profiles(self.providers, provider, settings=load_settings(self.catalog_path))
+        if skip_patch:
+            return "Provider profiles synced. Desktop patch skipped (old version kept)."
         target = default_target("darwin")
         if force_close:
             self._interactive_progress(20, "process stop: closing ChatGPT after confirmation")
@@ -561,11 +595,11 @@ class ProviderManagerApp(App[Provider | ProviderManagerResult | None]):
         )
         return status.message
 
-    async def _run_interactive_sync(self, provider: Provider, force_close: bool) -> None:
+    async def _run_interactive_sync(self, provider: Provider, force_close: bool, skip_patch: bool = False) -> None:
         self.progress_screen = WindowsProgressScreen("SYNCING ENABLED PROVIDERS")
         await self.push_screen(self.progress_screen, self._interactive_progress_closed)
         try:
-            message = await asyncio.to_thread(self._sync_and_patch, provider, force_close)
+            message = await asyncio.to_thread(self._sync_and_patch, provider, force_close, skip_patch)
         except (ConfigError, OSError, PatchError) as exc:
             self.progress_screen.finish(str(exc), error=True)
             return

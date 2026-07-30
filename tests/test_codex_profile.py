@@ -54,6 +54,8 @@ def test_desktop_picker_uses_the_exact_tui_provider_name():
             "id": "codexier-private-eu",
             "label": "Private EU + Prod",
             "description": "Custom Provider",
+            "base_url": "https://private.example/v1/",
+            "token": "secret",
             "models": [{"id": "model-id", "label": "Model Label"}],
         }
     ]
@@ -190,17 +192,11 @@ def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: P
     assert provider_route_id(other) == "codexier-other"
     assert config["model_provider"] == "codexier"
     assert config["codexier_provider_id"] == "other"
-    assert set(config["model_providers"]) >= {
-        "codexier",
-        "codexier-demo",
-        "codexier-other",
-    }
+    # Single shared route — no per-provider codexier-{id} TOML sections.
+    assert set(config["model_providers"]) == {"codexier"}
     assert set(config["profiles"]) == {"codexier"}
     assert config["profiles"]["codexier"]["name"] == "Codexier"
-    assert all(
-        config["model_providers"][route]["name"] == "Codexier"
-        for route in ("codexier", "codexier-demo", "codexier-other")
-    )
+    assert config["model_providers"]["codexier"]["name"] == "Codexier"
     assert [model["slug"] for model in catalog["models"]] == [
         "gpt-5.2", "claude/opus 4.8", "other/model"
     ]
@@ -210,6 +206,9 @@ def test_apply_writes_one_normal_profile_and_enabled_provider_routes(tmp_path: P
     assert desktop["providers"][1]["models"] == [
         {"id": "other/model", "label": "Other Model"}
     ]
+    # Credentials live in desktop-model-providers.json, not TOML sections.
+    assert desktop["providers"][1]["base_url"] == "https://other.example/v1/"
+    assert desktop["providers"][1]["token"] == "other-secret"
 
 
 def test_sync_preserves_unrelated_session_like_configuration_tables(tmp_path: Path):

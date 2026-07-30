@@ -40,7 +40,9 @@ def running_process(root: Path, name: str = "ChatGPT.exe") -> ChatGPTProcess:
 
 
 def test_status_detects_installed_patch(tmp_path: Path):
-    app = target(tmp_path, b"before" + PATCH_MARKER + b"after")
+    from codexier.desktop_macos_diffs import patch_content_tag
+
+    app = target(tmp_path, b"before" + PATCH_MARKER + patch_content_tag() + b"after")
     assert patch_status(app).patched
 
 
@@ -55,7 +57,9 @@ def test_status_recognizes_legacy_patch_as_reapply_required(tmp_path: Path):
 
 
 def test_already_patched_archive_reports_completion_without_mutation(tmp_path: Path):
-    app = target(tmp_path, b"before" + PATCH_MARKER + b"after")
+    from codexier.desktop_macos_diffs import patch_content_tag
+
+    app = target(tmp_path, b"before" + PATCH_MARKER + patch_content_tag() + b"after")
     original = app.archive_path.read_bytes()
     events: list[tuple[int, str]] = []
     status = apply_desktop_patch(app, tmp_path / "backups", lambda *event: events.append(event))
@@ -66,6 +70,14 @@ def test_already_patched_archive_reports_completion_without_mutation(tmp_path: P
         (MILESTONES["detection"], f"detection: inspecting {app.archive_path}"),
         (MILESTONES["completion"], "completion: already patched; app.asar was not modified"),
     ]
+
+
+def test_stale_patch_without_content_tag_triggers_reapply(tmp_path: Path):
+    """An installed patch missing the current content tag is stale."""
+    app = target(tmp_path, b"before" + PATCH_MARKER + b"v_old_tag" + b"after")
+    status = patch_status(app)
+    assert status.patched
+    assert status.reapply_required
 
 
 def test_restore_uses_exact_backup(tmp_path: Path):
@@ -373,10 +385,12 @@ def test_windows_symlinked_archive_outside_process_root_is_rejected(
 
 
 def test_windows_already_patched_valid_runtime_is_not_modified(tmp_path: Path, monkeypatch):
+    from codexier.desktop_macos_diffs import patch_content_tag
+
     root = tmp_path / "ChatGPT"
     archive = root / "resources" / "app.asar"
     archive.parent.mkdir(parents=True)
-    archive.write_bytes(valid_asar(PATCH_MARKER))
+    archive.write_bytes(valid_asar(PATCH_MARKER + patch_content_tag()))
     original = archive.read_bytes()
     monkeypatch.setattr(
         "codexier.process_manager.detect_chatgpt_processes",

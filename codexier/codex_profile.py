@@ -245,7 +245,13 @@ def build_catalog_for_providers(
 def build_desktop_provider_config(
     providers: tuple[Provider, ...], selected_provider: Provider
 ) -> dict[str, Any]:
-    """Build provider-first routing data read by the desktop picker patch."""
+    """Build provider-first routing data read by the desktop picker patch.
+
+    Each provider carries its own ``base_url`` and ``token`` so the desktop
+    patch can swap credentials into the single ``[model_providers.codexier]``
+    route without needing per-provider TOML sections.  The file is written
+    with mode 0o600 — never committed, never logged by the patch.
+    """
     return {
         "version": 2,
         "default_provider": provider_route_id(selected_provider),
@@ -254,6 +260,8 @@ def build_desktop_provider_config(
                 "id": provider_route_id(provider),
                 "label": provider.name,
                 "description": "Custom Provider",
+                "base_url": provider.base_url.rstrip("/") + "/",
+                "token": provider.api_key,
                 "models": [
                     {"id": model.id, "label": model.label}
                     for model in provider.models
@@ -424,9 +432,10 @@ def apply_codex_profiles(
     for profile_id in tuple(profiles):
         if profile_id.startswith("codexier-"):
             del profiles[profile_id]
+    # Single shared route — all providers swap credentials into this one
+    # section.  No per-provider ``codexier-{id}`` sections are created so
+    # threads are never fragmented across provider namespaces.
     provider_table["codexier"] = _provider_route(selected_provider)
-    for provider in enabled_providers:
-        provider_table[provider_route_id(provider)] = _provider_route(provider)
     profiles["codexier"] = _normal_profile(selected_provider, catalog_path, settings)
     atomic_write(config_path, tomli_w.dumps(result).encode(), mode=0o600)
     atomic_write(profile_path, tomli_w.dumps(profiles["codexier"]).encode(), mode=0o600)
