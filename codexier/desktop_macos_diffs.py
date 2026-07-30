@@ -882,6 +882,17 @@ async function codexPatchAppServerParams(e, t) {
     wire_api: `responses`,
   };
   out.config = cfg;
+  if (window.__codexProviderDebugPending === i.id) {
+    window.__codexProviderDebugPending = null;
+    alert(
+      `Codexier Provider Route — VERIFIED\n\n` +
+      `Request: thread/start\n` +
+      `Provider: ${i.id}\n` +
+      `Model: ${out.model ?? `(unknown)`}\n` +
+      `base_url: ${i.base_url}\n\n` +
+      `Inline provider config was attached to this request.`
+    );
+  }
   return out;
 }"""
 
@@ -1068,6 +1079,14 @@ function CodexCustomProviderPickerSection() {
 }
 function codexWriteProviderChoiceV4(e) {
   try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
+  window.__codexProviderDebugPending = e;
+  let selected = codexPickerProviderRoutingStateV4().config.providers.find((t) => t.id === e);
+  alert(
+    `Codexier Provider Switch — SELECTED\n\n` +
+    `Provider: ${e}\n` +
+    `base_url: ${selected?.base_url ?? `(unknown)`}\n\n` +
+    `Waiting for next thread/start request to verify inline routing.`
+  );
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
   void Rf(`clear-prewarmed-threads-for-host`, { hostId: `local` }).catch(() => {});
 }"""
@@ -1503,5 +1522,4 @@ def apply_supported_patch_variant(central: Path, picker: Path) -> str:
     for path, source in rendered.items():
         path.write_text(source, encoding="utf-8")
     return name
-
 

@@ -128,6 +128,9 @@ def test_patch_uses_config_batchwrite_for_live_provider_switch():
     assert "codexSyncConfigOnLoad" not in patch_source
     assert "codexUpdateConfigModelProvider" not in patch_source
     assert "codexVerifyProviderSwitch" not in patch_source
+    assert "Codexier Provider Switch — SELECTED" in patch_source
+    assert "Codexier Provider Route — VERIFIED" in patch_source
+    assert "__codexProviderDebugPending" in patch_source
 
 
 def test_single_patch_payload_has_unversioned_marker_and_authoritative_routing():
