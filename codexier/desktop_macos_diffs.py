@@ -1060,32 +1060,34 @@ function CodexCustomProviderPickerSection() {
 }
 async function codexVerifyProviderSwitch(e) {
   try {
-    let cfg = await tp(`config/read`, { params: { hostId: `local` } });
-    let liveProvider = cfg?.model_provider ?? `(unknown)`;
-    let liveModel = cfg?.model ?? `(unknown)`;
-    let providers = cfg?.model_providers ?? {};
-    let section = providers[e] ?? providers[liveProvider] ?? {};
-    let liveBaseUrl = section.base_url ?? `(unknown)`;
+    let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
+      sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
+      path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
+      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } });
+    let liveProvider = raw.match(/^model_provider\s*=\s*"([^"]*)"/m)?.[1] ?? `(unknown)`;
+    let liveModel = raw.match(/^\s*model\s*=\s*"([^"]*)"/m)?.[1] ?? `(unknown)`;
+    let sectionMatch = raw.match(new RegExp(`\\[model_providers\\.${liveProvider.replace(/[.*+?^${}()|[\]\\]/g, `\\$&`)}\\]([\\s\\S]*?)(?=\\n\\[|$)`));
+    let liveBaseUrl = sectionMatch?.[1]?.match(/base_url\s*=\s*"([^"]*)"/)?.[1] ?? `(unknown)`;
     let baseUrlShort = liveBaseUrl.length > 40 ? liveBaseUrl.substring(0, 37) + `...` : liveBaseUrl;
     let match = liveProvider === e;
     let icon = match ? `OK` : `MISMATCH`;
     let msg =
       `Codexier Provider Switch — ${icon}\n\n` +
       `Selected (localStorage): ${e}\n` +
-      `Live config model_provider: ${liveProvider}\n` +
-      `Live config model: ${liveModel}\n` +
-      `Live base_url: ${baseUrlShort}\n\n`;
+      `config.toml model_provider: ${liveProvider}\n` +
+      `config.toml model: ${liveModel}\n` +
+      `base_url: ${baseUrlShort}\n\n`;
     if (match) {
-      msg += `Provider is active. Requests will route through ${e}.`;
+      msg += `config.toml is correct. If requests still go to wrong provider, restart ChatGPT to force Codex CLI to re-read config.`;
     } else {
-      msg += `MISMATCH! Selected ${e} but Codex CLI is using ${liveProvider}.\n` +
-        `Reload the page or restart ChatGPT to apply the change.`;
+      msg += `MISMATCH! config.toml has ${liveProvider} but you selected ${e}.\n` +
+        `The write may have failed. Try switching again.`;
     }
     alert(msg);
     console.error(`[codex-provider-patch] verify: selected=${e} live=${liveProvider} model=${liveModel} base_url=${baseUrlShort} match=${match}`);
   } catch (err) {
     console.error(`[codex-provider-patch] verify failed:`, String(err));
-    alert(`Codexier: Could not read live config after switch.\nError: ${String(err)}`);
+    alert(`Codexier: Could not read config.toml after switch.\nError: ${String(err)}`);
   }
 }
 async function codexUpdateConfigModelProvider(e, reload = true) {
