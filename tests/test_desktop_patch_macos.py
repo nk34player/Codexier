@@ -110,7 +110,7 @@ def test_generated_desktop_patch_keeps_custom_threads_visible_and_routes_new_sta
     assert "modelProviders: null" in patch_source
     assert "thread/read" not in patch_source
     assert "workspace" not in patch_source
-    assert "modelProvider: `codexier`" in patch_source
+    assert "modelProvider: i.id" in patch_source
     assert "codexSyncProviderChoiceForModelV4" not in patch_source
     assert "codex.customModelProviders.v1" not in patch_source
     assert "providerId: o.id" in patch_source
@@ -118,23 +118,21 @@ def test_generated_desktop_patch_keeps_custom_threads_visible_and_routes_new_sta
     assert "out.model = i.models[0].id" in patch_source
 
 
-def test_patch_syncs_credentials_on_load_and_updates_model_field():
+def test_patch_uses_config_batchwrite_for_live_provider_switch():
     patch_source = "\n".join((CENTRAL_V7_JAVASCRIPT, PICKER_V7_JAVASCRIPT))
     assert "codexSyncConfigOnLoad" in patch_source
-    assert "codexSyncConfigOnLoad().catch(() => {});" in patch_source
-    assert "__codexStartupSyncDone" in patch_source
-    assert 'alert(`Codexier: Switching provider' not in patch_source
-    assert "config/batchWrite" not in patch_source
-    assert "modelLine" in patch_source
-    assert 'lines[modelLine] = lines[modelLine].replace' in patch_source
+    assert "config/batchWrite" in patch_source
+    assert "model_provider: e" in patch_source
     assert "window.location.reload" in patch_source
+    assert 'alert(`Codexier: Switching provider' not in patch_source
+    assert "write-file" not in patch_source
 
 
 def test_single_patch_payload_has_unversioned_marker_and_authoritative_routing():
     patch_source = "\n".join((CENTRAL_V7_JAVASCRIPT, PICKER_V7_JAVASCRIPT))
     assert "__codexDesktopModelProvidersPatch" in patch_source
     assert "PatchV" not in patch_source
-    assert "modelProvider: `codexier`" in patch_source
+    assert "modelProvider: i.id" in patch_source
     assert "codexSyncProviderChoiceForModelV4" not in patch_source
     assert "codex.customModelProviders.v1" not in patch_source
 

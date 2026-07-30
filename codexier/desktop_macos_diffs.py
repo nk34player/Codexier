@@ -870,7 +870,7 @@ async function codexPatchAppServerParams(e, t) {
   try { r = window.localStorage.getItem(`codex.customProviderSelection.v2`); } catch {}
   let i = n.providers.find((e) => e.id === r) ?? n.providers.find((e) => e.id === n.defaultProvider);
   if (i == null) return t;
-  let out = { ...t, modelProvider: `codexier` };
+  let out = { ...t, modelProvider: i.id };
   let hasModel = typeof t.model === `string` && i.models.some((e) => e.id === t.model);
   if (!hasModel && i.models.length > 0) out.model = i.models[0].id;
   return out;
@@ -1058,49 +1058,20 @@ function CodexCustomProviderPickerSection() {
     ],
   });
 }
-async function codexUpdateConfigModelProvider(e, reload = true) {
+async function codexUpdateConfigModelProvider(e, reload = false) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
   try {
-    let cfg = await codexLoadProviderRoutingConfigV4(!0);
-    let p = cfg.providers.find((x) => x.id === e) ?? cfg.providers.find((x) => x.id === cfg.defaultProvider);
-    if (p == null || !p.base_url || !p.token) {
-      console.error(`[codex-provider-patch] no base_url/token for provider ${e} in desktop-model-providers.json`);
-      return;
-    }
-    let newModel = p.models.length > 0 ? p.models[0].id : ``;
-    let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
-      sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
-      path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
-      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } }),
-      lines = raw.split(`\n`),
-      inCodexier = false, baseUrlLine = -1, tokenLine = -1, modelLine = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].trim() === `[model_providers.codexier]`) inCodexier = true;
-      else if (inCodexier && lines[i].trim().startsWith(`[`)) break;
-      else if (inCodexier) {
-        if (lines[i].match(/^\s*base_url\s*=/)) baseUrlLine = i;
-        else if (lines[i].match(/^\s*experimental_bearer_token\s*=/)) tokenLine = i;
-      }
-      if (lines[i].match(/^\s*model\s*=\s*"/) && !inCodexier) modelLine = i;
-    }
-    if (baseUrlLine === -1 || tokenLine === -1) {
-      console.error(`[codex-provider-patch] could not locate base_url/token lines in [model_providers.codexier]`);
-      return;
-    }
-    lines[baseUrlLine] = lines[baseUrlLine].replace(/"[^"]*"/, `"${p.base_url}"`);
-    lines[tokenLine] = lines[tokenLine].replace(/"[^"]*"/, `"${p.token}"`);
-    if (newModel && modelLine >= 0) {
-      lines[modelLine] = lines[modelLine].replace(/"[^"]*"/, `"${newModel}"`);
-      console.error(`[codex-provider-patch] model set to ${newModel}`);
-    }
-    await tp(`write-file`, { params: { hostId: `local`, path, contents: lines.join(`\n`) } });
-    console.error(`[codex-provider-patch] config.toml written: base_url + token + model`);
+    await tp(`config/batchWrite`, {
+      params: { hostId: `local` },
+      model_provider: e,
+    });
+    console.error(`[codex-provider-patch] config/batchWrite succeeded: model_provider=${e}`);
     if (reload) {
-      console.error(`[codex-provider-patch] reloading to apply new credentials`);
+      console.error(`[codex-provider-patch] reloading to apply new provider`);
       setTimeout(() => window.location.reload(), 500);
     }
   } catch (err) {
-    console.error(`[codex-provider-patch] switch failed:`, String(err));
+    console.error(`[codex-provider-patch] config/batchWrite failed:`, String(err));
   }
 }
 async function codexSyncConfigOnLoad() {
@@ -1110,24 +1081,15 @@ async function codexSyncConfigOnLoad() {
     let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
     if (!stored) return;
     console.error(`[codex-provider-patch] startup sync for provider: ${stored}`);
-    let reloadKey = `codex.startupSyncReload.${stored}`;
-    let alreadyReloaded = window.localStorage.getItem(reloadKey) === `1`;
-    await codexUpdateConfigModelProvider(stored, !alreadyReloaded);
-    if (!alreadyReloaded) {
-      try { window.localStorage.setItem(reloadKey, `1`); } catch {}
-    }
+    await codexUpdateConfigModelProvider(stored, false);
   } catch (err) {
     console.error(`[codex-provider-patch] startup sync failed:`, String(err));
   }
 }
 function codexWriteProviderChoiceV4(e) {
-  try {
-    window.localStorage.setItem(`codex.customProviderSelection.v2`, e);
-    let reloadKey = `codex.startupSyncReload.${e}`;
-    window.localStorage.removeItem(reloadKey);
-  } catch {}
+  try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e, true).catch((err) => {
+  codexUpdateConfigModelProvider(e, false).catch((err) => {
     console.error(`[codex-provider-patch] unhandled error:`, String(err));
   });
 }"""

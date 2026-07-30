@@ -432,10 +432,12 @@ def apply_codex_profiles(
     for profile_id in tuple(profiles):
         if profile_id.startswith("codexier-"):
             del profiles[profile_id]
-    # Single shared route — all providers swap credentials into this one
-    # section.  No per-provider ``codexier-{id}`` sections are created so
-    # threads are never fragmented across provider namespaces.
+    # The active route is always 'codexier' so threads are never fragmented.
+    # Per-provider routes (codexier-{id}) exist so config/batchWrite can
+    # switch Codex CLI's active provider live without credential swapping.
     provider_table["codexier"] = _provider_route(selected_provider)
+    for provider in enabled_providers:
+        provider_table[provider_route_id(provider)] = _provider_route(provider)
     profiles["codexier"] = _normal_profile(selected_provider, catalog_path, settings)
     atomic_write(config_path, tomli_w.dumps(result).encode(), mode=0o600)
     atomic_write(profile_path, tomli_w.dumps(profiles["codexier"]).encode(), mode=0o600)
