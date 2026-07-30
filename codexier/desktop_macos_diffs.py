@@ -1058,6 +1058,36 @@ function CodexCustomProviderPickerSection() {
     ],
   });
 }
+async function codexVerifyProviderSwitch(e) {
+  try {
+    let cfg = await tp(`config/read`, { params: { hostId: `local` } });
+    let liveProvider = cfg?.model_provider ?? `(unknown)`;
+    let liveModel = cfg?.model ?? `(unknown)`;
+    let providers = cfg?.model_providers ?? {};
+    let section = providers[e] ?? providers[liveProvider] ?? {};
+    let liveBaseUrl = section.base_url ?? `(unknown)`;
+    let baseUrlShort = liveBaseUrl.length > 40 ? liveBaseUrl.substring(0, 37) + `...` : liveBaseUrl;
+    let match = liveProvider === e;
+    let icon = match ? `OK` : `MISMATCH`;
+    let msg =
+      `Codexier Provider Switch — ${icon}\n\n` +
+      `Selected (localStorage): ${e}\n` +
+      `Live config model_provider: ${liveProvider}\n` +
+      `Live config model: ${liveModel}\n` +
+      `Live base_url: ${baseUrlShort}\n\n`;
+    if (match) {
+      msg += `Provider is active. Requests will route through ${e}.`;
+    } else {
+      msg += `MISMATCH! Selected ${e} but Codex CLI is using ${liveProvider}.\n` +
+        `The switch may not have taken effect. Try closing and reopening ChatGPT.`;
+    }
+    alert(msg);
+    console.error(`[codex-provider-patch] verify: selected=${e} live=${liveProvider} model=${liveModel} base_url=${baseUrlShort} match=${match}`);
+  } catch (err) {
+    console.error(`[codex-provider-patch] verify failed:`, String(err));
+    alert(`Codexier: Could not read live config after switch.\nError: ${String(err)}`);
+  }
+}
 async function codexUpdateConfigModelProvider(e, reload = false) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
   try {
@@ -1066,12 +1096,14 @@ async function codexUpdateConfigModelProvider(e, reload = false) {
       model_provider: e,
     });
     console.error(`[codex-provider-patch] config/batchWrite succeeded: model_provider=${e}`);
+    await codexVerifyProviderSwitch(e);
     if (reload) {
       console.error(`[codex-provider-patch] reloading to apply new provider`);
       setTimeout(() => window.location.reload(), 500);
     }
   } catch (err) {
     console.error(`[codex-provider-patch] config/batchWrite failed:`, String(err));
+    alert(`Codexier: Failed to switch provider to ${e}.\nError: ${String(err)}`);
   }
 }
 async function codexSyncConfigOnLoad() {

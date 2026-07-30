@@ -126,6 +126,9 @@ def test_patch_uses_config_batchwrite_for_live_provider_switch():
     assert "window.location.reload" in patch_source
     assert 'alert(`Codexier: Switching provider' not in patch_source
     assert "write-file" not in patch_source
+    assert "codexVerifyProviderSwitch" in patch_source
+    assert "config/read" in patch_source
+    assert "Live config model_provider" in patch_source
 
 
 def test_single_patch_payload_has_unversioned_marker_and_authoritative_routing():
