@@ -1110,13 +1110,22 @@ async function codexSyncConfigOnLoad() {
     let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
     if (!stored) return;
     console.error(`[codex-provider-patch] startup sync for provider: ${stored}`);
-    await codexUpdateConfigModelProvider(stored, false);
+    let reloadKey = `codex.startupSyncReload.${stored}`;
+    let alreadyReloaded = window.localStorage.getItem(reloadKey) === `1`;
+    await codexUpdateConfigModelProvider(stored, !alreadyReloaded);
+    if (!alreadyReloaded) {
+      try { window.localStorage.setItem(reloadKey, `1`); } catch {}
+    }
   } catch (err) {
     console.error(`[codex-provider-patch] startup sync failed:`, String(err));
   }
 }
 function codexWriteProviderChoiceV4(e) {
-  try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
+  try {
+    window.localStorage.setItem(`codex.customProviderSelection.v2`, e);
+    let reloadKey = `codex.startupSyncReload.${e}`;
+    window.localStorage.removeItem(reloadKey);
+  } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
   codexUpdateConfigModelProvider(e, true).catch((err) => {
     console.error(`[codex-provider-patch] unhandled error:`, String(err));
