@@ -1079,7 +1079,7 @@ async function codexVerifyProviderSwitch(e) {
       msg += `Provider is active. Requests will route through ${e}.`;
     } else {
       msg += `MISMATCH! Selected ${e} but Codex CLI is using ${liveProvider}.\n` +
-        `The switch may not have taken effect. Try closing and reopening ChatGPT.`;
+        `Reload the page or restart ChatGPT to apply the change.`;
     }
     alert(msg);
     console.error(`[codex-provider-patch] verify: selected=${e} live=${liveProvider} model=${liveModel} base_url=${baseUrlShort} match=${match}`);
@@ -1088,21 +1088,29 @@ async function codexVerifyProviderSwitch(e) {
     alert(`Codexier: Could not read live config after switch.\nError: ${String(err)}`);
   }
 }
-async function codexUpdateConfigModelProvider(e, reload = false) {
+async function codexUpdateConfigModelProvider(e, reload = true) {
   console.error(`[codex-provider-patch] switching to provider: ${e}`);
   try {
-    await tp(`config/batchWrite`, {
-      params: { hostId: `local` },
-      model_provider: e,
-    });
-    console.error(`[codex-provider-patch] config/batchWrite succeeded: model_provider=${e}`);
-    await codexVerifyProviderSwitch(e);
+    let { codexHome: h } = await tp(`codex-home`, { params: { hostId: `local` } }),
+      sep = h.includes(`\\`) && !h.includes(`/`) ? `\\` : `/`,
+      path = `${h.replace(/[\\/]+$/u, ``)}${sep}config.toml`,
+      { contents: raw } = await tp(`read-file`, { params: { hostId: `local`, path } }),
+      patched = raw.replace(/^model_provider\s*=\s*"[^"]*"/m, `model_provider = "${e}"`);
+    if (patched === raw) {
+      console.error(`[codex-provider-patch] model_provider line not found in config.toml`);
+      alert(`Codexier: Could not find model_provider line in config.toml.\nProvider NOT switched.`);
+      return;
+    }
+    await tp(`write-file`, { params: { hostId: `local`, path, contents: patched } });
+    console.error(`[codex-provider-patch] config.toml written: model_provider=${e}`);
     if (reload) {
       console.error(`[codex-provider-patch] reloading to apply new provider`);
       setTimeout(() => window.location.reload(), 500);
+    } else {
+      await codexVerifyProviderSwitch(e);
     }
   } catch (err) {
-    console.error(`[codex-provider-patch] config/batchWrite failed:`, String(err));
+    console.error(`[codex-provider-patch] switch failed:`, String(err));
     alert(`Codexier: Failed to switch provider to ${e}.\nError: ${String(err)}`);
   }
 }
@@ -1113,15 +1121,24 @@ async function codexSyncConfigOnLoad() {
     let stored = window.localStorage.getItem(`codex.customProviderSelection.v2`);
     if (!stored) return;
     console.error(`[codex-provider-patch] startup sync for provider: ${stored}`);
-    await codexUpdateConfigModelProvider(stored, false);
+    let reloadKey = `codex.startupSyncReload.${stored}`;
+    let alreadyReloaded = window.localStorage.getItem(reloadKey) === `1`;
+    await codexUpdateConfigModelProvider(stored, !alreadyReloaded);
+    if (!alreadyReloaded) {
+      try { window.localStorage.setItem(reloadKey, `1`); } catch {}
+    }
   } catch (err) {
     console.error(`[codex-provider-patch] startup sync failed:`, String(err));
   }
 }
 function codexWriteProviderChoiceV4(e) {
-  try { window.localStorage.setItem(`codex.customProviderSelection.v2`, e); } catch {}
+  try {
+    window.localStorage.setItem(`codex.customProviderSelection.v2`, e);
+    let reloadKey = `codex.startupSyncReload.${e}`;
+    window.localStorage.removeItem(reloadKey);
+  } catch {}
   window.dispatchEvent(new Event(`codex.customProviderSelection.v2.change`));
-  codexUpdateConfigModelProvider(e, false).catch((err) => {
+  codexUpdateConfigModelProvider(e, true).catch((err) => {
     console.error(`[codex-provider-patch] unhandled error:`, String(err));
   });
 }"""
